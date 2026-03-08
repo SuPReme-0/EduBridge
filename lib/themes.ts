@@ -44,7 +44,7 @@ export const THEME_CONFIG: Record<string, ThemeConfig> = {
     glow: 'shadow-[0_20px_40px_rgba(99,102,241,0.1)]',
   },
 
-  librarySage: {
+  'library-sage': {
     bg: 'bg-[#FDF8F2]',
     card: 'bg-[#F5EFE4]/80 backdrop-blur-3xl',
     border: 'border-[#E2D6C0]',
@@ -65,7 +65,7 @@ export const THEME_CONFIG: Record<string, ThemeConfig> = {
     glow: 'shadow-[0_20px_40px_rgba(139,94,52,0.1)]',
   },
 
-  zenGarden: {
+  'zen-garden': {
     bg: 'bg-[#F0FDF4]',
     card: 'bg-white/80 backdrop-blur-3xl',
     border: 'border-emerald-200',
@@ -213,7 +213,7 @@ export const THEME_CONFIG: Record<string, ThemeConfig> = {
     glow: 'shadow-[0_0_40px_rgba(6,182,212,0.2)]',
   },
 
-  spaceOdyssey: {
+  'space-odyssey': {
     bg: 'bg-[#020205]',
     card: 'bg-[#0B0B1A]/80 backdrop-blur-3xl',
     border: 'border-violet-500/20',
@@ -255,7 +255,7 @@ export const THEME_CONFIG: Record<string, ThemeConfig> = {
     glow: 'shadow-[0_0_40px_rgba(16,185,129,0.2)]',
   },
 
-  crimsonDark: {
+  'crimson-dark': {
     bg: 'bg-[#0A0204]',
     card: 'bg-[#120508]/80 backdrop-blur-2xl',
     border: 'border-red-500/20',
@@ -280,15 +280,15 @@ export const THEME_CONFIG: Record<string, ThemeConfig> = {
 // Export VIBES array for theme selection UI
 export const VIBES = [
   { id: 'minimalist', label: 'Minimalist', gradient: 'from-indigo-600 to-blue-600', desc: 'Clean Academic' },
-  { id: 'librarySage', label: 'Library Sage', gradient: 'from-[#8B5E34] to-[#5C3A21]', desc: 'Warm, Scholarly' },
-  { id: 'zenGarden', label: 'Zen Garden', gradient: 'from-emerald-500 to-teal-700', desc: 'Natural, Calming' },
+  { id: 'library-sage', label: 'Library Sage', gradient: 'from-[#8B5E34] to-[#5C3A21]', desc: 'Warm, Scholarly' },
+  { id: 'zen-garden', label: 'Zen Garden', gradient: 'from-emerald-500 to-teal-700', desc: 'Natural, Calming' },
   { id: 'oceanBreeze', label: 'Ocean Breeze', gradient: 'from-sky-400 to-blue-700', desc: 'Crisp, Flowing' },
   { id: 'sunrise', label: 'Sunrise', gradient: 'from-amber-400 via-orange-500 to-red-500', desc: 'Bright, Energetic' },
   { id: 'lavenderDream', label: 'Lavender', gradient: 'from-violet-400 to-purple-700', desc: 'Soft, Ethereal' },
   { id: 'goldenHour', label: 'Golden Hour', gradient: 'from-yellow-400 to-amber-700', desc: 'Warm, Cinematic' },
   { id: 'arctic', label: 'Arctic Ice', gradient: 'from-slate-400 to-slate-700', desc: 'Cool, Focused' },
   { id: 'cyberpunk', label: 'Cyberpunk', gradient: 'from-cyan-400 via-blue-500 to-purple-600', desc: 'Neon, Digital' },
-  { id: 'spaceOdyssey', label: 'Cosmic', gradient: 'from-violet-600 via-fuchsia-500 to-orange-500', desc: 'Deep Space' },
+  { id: 'space-odyssey', label: 'Cosmic', gradient: 'from-violet-600 via-fuchsia-500 to-orange-500', desc: 'Deep Space' },
   { id: 'forestNight', label: 'Forest Night', gradient: 'from-emerald-400 to-green-800', desc: 'Dark, Organic' },
-  { id: 'crimsonDark', label: 'Crimson', gradient: 'from-red-500 to-rose-900', desc: 'Bold, Intense' },
+  { id: 'crimson-dark', label: 'Crimson', gradient: 'from-red-500 to-rose-900', desc: 'Bold, Intense' },
 ];

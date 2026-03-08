@@ -1,7 +1,7 @@
 // app/dashboard/page.tsx
 'use client';
 
-import { useEffect, useState, useCallback, Suspense, useRef } from 'react';
+import { useEffect, useState, useCallback, Suspense, useRef, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence, useScroll, useTransform } from 'motion/react';
@@ -12,6 +12,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import {
   Menu, X, Library, BookOpen, Clock, Flame, Target,
   Trophy, Award, Settings, LogOut, RefreshCw, MessageCircleQuestion,
@@ -19,7 +20,9 @@ import {
   Star, Crown, Gem, Medal, AlertCircle, Loader2, BookMarked, 
   PlayCircle, Upload, Database, Timer, Sparkles, LayoutDashboard, 
   Bell, FileText, CheckCircle, RotateCcw, User, ArrowRight, Terminal,
-  Share2, AlertTriangle
+  Share2, AlertTriangle, TrendingUp, Calendar, Layers, BarChart4,
+  LineChart, PieChart, CircleDashed, CircleDot, Orbit,
+  Rocket, Satellite, Telescope, Cpu, Gauge, ZapIcon
 } from 'lucide-react';
 
 // ============================================================================
@@ -72,6 +75,7 @@ type ProfileData = {
   avatarUrl: string | null;
   totalStudyMinutes: number;
   currentStreak: number;
+  longestStreak: number;
   totalPoints: number;
   testsCompleted: number;
   averageMastery: number;
@@ -104,26 +108,9 @@ type Assessment = {
   canRetake: boolean;
 };
 
-type Stat = {
-  id: string;
-  title: string;
-  value: string | number;
-  desc: string;
-  icon: React.ComponentType<{ className?: string }>;
-  color: string;
-  bg: string;
-};
-
 // ============================================================================
-// CATEGORY COLORS
+// CONSTANTS
 // ============================================================================
-
-const CATEGORY_COLORS: Record<string, { text: string; bg: string; border: string; icon: any }> = {
-  learning: { text: 'text-blue-600', bg: 'bg-blue-500/10', border: 'border-blue-500/20', icon: BookOpen },
-  streak: { text: 'text-orange-600', bg: 'bg-orange-500/10', border: 'border-orange-500/20', icon: Flame },
-  mastery: { text: 'text-violet-600', bg: 'bg-violet-500/10', border: 'border-violet-500/20', icon: Target },
-  social: { text: 'text-emerald-600', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20', icon: Share2 },
-};
 
 const NAV_ITEMS = [
   { id: 'overview', label: 'Command Center', icon: LayoutDashboard },
@@ -133,7 +120,7 @@ const NAV_ITEMS = [
 ];
 
 // ============================================================================
-// SKELETON LOADER COMPONENTS
+// SKELETON LOADERS
 // ============================================================================
 
 const SubjectSkeleton = () => (
@@ -158,10 +145,26 @@ const AssessmentSkeleton = () => (
   </div>
 );
 
-// ============================================================================
-// ANIMATED GREETING COMPONENT (STRICT-MODE PROOF)
-// ============================================================================
+const TimelineSkeleton = () => (
+  <Card className="rounded-3xl border border-slate-200/30 bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm animate-pulse h-64 p-6">
+    <div className="h-8 w-48 bg-slate-200 dark:bg-slate-700 rounded-xl mb-6" />
+    <div className="space-y-4">
+      {[...Array(3)].map((_, i) => (
+        <div key={i} className="flex items-center gap-4">
+          <div className="w-10 h-10 rounded-full bg-slate-200 dark:bg-slate-700" />
+          <div className="flex-1">
+            <div className="h-4 w-3/4 bg-slate-200 dark:bg-slate-700 rounded-lg mb-2" />
+            <div className="h-3 w-1/2 bg-slate-200 dark:bg-slate-700 rounded-lg" />
+          </div>
+        </div>
+      ))}
+    </div>
+  </Card>
+);
 
+// ============================================================================
+// ANIMATED GREETING
+// ============================================================================
 const AnimatedGreeting = ({ name, theme, lastActive }: { name: string, theme: any, lastActive: string | null }) => {
   const [phase, setPhase] = useState<'booting' | 'typing'>('booting');
   const [text, setText] = useState('');
@@ -220,9 +223,8 @@ const AnimatedGreeting = ({ name, theme, lastActive }: { name: string, theme: an
 };
 
 // ============================================================================
-// MAIN DASHBOARD COMPONENT
+// MAIN COMPONENT
 // ============================================================================
-
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -245,6 +247,7 @@ function DashboardContent() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [activeView, setActiveView] = useState(searchParams.get('view') || 'overview');
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedSubject, setSelectedSubject] = useState<string | null>(null);
   
   // Notifications State
   const [isNotifOpen, setIsNotifOpen] = useState(false);
@@ -315,13 +318,19 @@ function DashboardContent() {
 
       const p = profileData.profile as ProfileData;
       setProfile(p);
-      setCurriculums(p.user?.curriculums || []);
+      
+      // 🔥 Filter out archived curricula
+      const activeCurriculums = (p.user?.curriculums || []).filter(
+        (curr: Curriculum) => curr.status !== 'ARCHIVED'
+      );
+      setCurriculums(activeCurriculums);
+      
       setAchievements(achievementsData.achievements || []);
       updateProfile(p);
 
-      // Generate Assessments map
+      // Generate Assessments map (only from active curriculums)
       const assessments: Assessment[] = [];
-      p.user?.curriculums?.forEach((curr: Curriculum) => {
+      activeCurriculums.forEach((curr: Curriculum) => {
         curr.subjects.forEach((sub: Subject) => {
           sub.chapters.forEach((chapter: Chapter, index: number) => {
             const isCompleted = chapter.progress?.some((prog: ChapterProgress) => prog.completedAt !== null) ?? false;
@@ -344,6 +353,11 @@ function DashboardContent() {
         });
       });
       setGeneratedAssessments(assessments);
+
+      // Set first subject as selected if available
+      if (activeCurriculums.length > 0 && activeCurriculums[0].subjects.length > 0) {
+        setSelectedSubject(activeCurriculums[0].subjects[0].name);
+      }
 
     } catch (err: any) {
       console.error('Dashboard fetch error:', err);
@@ -400,6 +414,14 @@ function DashboardContent() {
   const level = Math.floor((profile.totalPoints || 0) / 1000) + 1;
   const hasNoCurriculum = curriculums.length === 0;
 
+  // Calculate overall curriculum progress
+  const totalChapters = curriculums.reduce((acc, curr) => 
+    acc + curr.subjects.reduce((sAcc, sub) => sAcc + sub.chapters.length, 0), 0);
+  const completedChapters = curriculums.reduce((acc, curr) => 
+    acc + curr.subjects.reduce((sAcc, sub) => 
+      sAcc + sub.chapters.filter(ch => ch.progress?.some(p => p.completedAt)).length, 0), 0);
+  const overallProgress = totalChapters > 0 ? Math.round((completedChapters / totalChapters) * 100) : 0;
+
   const getLevelBadge = (lvl: number) => {
     if (lvl >= 50) return { icon: Crown, color: 'text-yellow-500', label: 'Grandmaster' };
     if (lvl >= 30) return { icon: Gem, color: 'text-violet-500', label: 'Senior Scholar' };
@@ -408,398 +430,562 @@ function DashboardContent() {
   };
   const levelBadge = getLevelBadge(level);
 
-  // "Up Next" Logic
-  let nextChapterInfo: { chapter: Chapter, subjectName: string } | null = null;
+  // Get next few chapters (for timeline)
+  const upcomingChapters: Array<{ chapter: Chapter; subjectName: string; eta?: string }> = [];
   if (curriculums.length > 0) {
     for (const subject of curriculums[0].subjects) {
-      const pendingChapter = subject.chapters.find(ch => 
-        ch.status === 'COMPLETED' && !(ch.progress?.some(p => p.completedAt !== null) ?? false)
-      );
-      if (pendingChapter) {
-        nextChapterInfo = { chapter: pendingChapter, subjectName: subject.name };
-        break;
+      for (const ch of subject.chapters) {
+        if (!ch.progress?.some(p => p.completedAt) && ch.status !== 'PENDING') {
+          // Simulate ETA based on chapter number (rough estimate)
+          const chapterIndex = subject.chapters.findIndex(c => c.id === ch.id);
+          const daysToAdd = Math.ceil(chapterIndex * 0.5); // 0.5 day per chapter
+          const eta = new Date(Date.now() + daysToAdd * 86400000).toLocaleDateString();
+          upcomingChapters.push({ chapter: ch, subjectName: subject.name, eta });
+          if (upcomingChapters.length >= 5) break;
+        }
       }
+      if (upcomingChapters.length >= 5) break;
     }
   }
 
   // ============================================================================
-  // RENDER: OVERVIEW
+  // RENDER: OVERVIEW (Command Center)
   // ============================================================================
   const renderOverview = () => (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-8">
       
       <AnimatedGreeting name={displayName} theme={theme} lastActive={profile.lastActiveAt} />
 
-      {/* Holographic Hero Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+      {/* Quick Stats Row */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className={`rounded-3xl border-0 overflow-hidden bg-gradient-to-br ${theme.gradient} text-white shadow-2xl relative group h-full`}>
-            <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-10 mix-blend-overlay" />
-            <div className="absolute -right-10 -top-10 w-40 h-40 bg-white/20 rounded-full blur-3xl group-hover:scale-150 transition-transform duration-700" />
-            <CardContent className="p-8 relative z-10 flex flex-col justify-center h-full">
-              <p className="text-xs font-bold uppercase tracking-widest text-white/70 mb-3">Clearance Level</p>
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-white/10 rounded-2xl backdrop-blur-md border border-white/20 shadow-[0_0_15px_rgba(255,255,255,0.2)]">
-                  <Crown className="w-10 h-10 text-yellow-300 drop-shadow-md" />
-                </div>
-                <div>
-                  <p className="text-4xl font-black drop-shadow-sm">Level {level}</p>
-                  <p className="text-sm font-medium text-white/90 tracking-wide mt-1">{profile.totalPoints} Total XP</p>
-                </div>
+          <Card className={`rounded-2xl ${theme.card} border ${theme.border} shadow-lg p-6 backdrop-blur-xl`}>
+            <div className="flex items-center justify-between mb-4">
+              <div className={`p-3 rounded-xl ${theme.accentLight}`}>
+                <Zap className={`w-6 h-6 ${theme.accent}`} />
               </div>
-            </CardContent>
+              <Badge className={`${theme.accentLight} ${theme.accent} border-0`}>Lv.{level}</Badge>
+            </div>
+            <p className={`text-sm ${theme.muted} mb-1`}>Total XP</p>
+            <p className={`text-3xl font-black ${theme.text}`}>{profile.totalPoints.toLocaleString()}</p>
+            <div className="mt-4 flex items-center gap-2">
+              <div className={`w-2 h-2 rounded-full ${theme.accentBg} animate-pulse`} />
+              <span className={`text-xs ${theme.muted}`}>+{Math.floor(profile.totalPoints * 0.1)} XP this week</span>
+            </div>
           </Card>
         </motion.div>
 
         <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className={`rounded-3xl ${theme.card} border border-orange-500/20 shadow-lg hover:shadow-orange-500/10 transition-all h-full relative overflow-hidden group`}>
-            <div className="absolute inset-0 bg-gradient-to-br from-orange-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <CardContent className="p-8 flex items-center justify-between h-full relative z-10">
-              <div>
-                <p className={`text-xs font-bold uppercase tracking-widest ${theme.muted} mb-2`}>Neural Streak</p>
-                <p className={`text-4xl font-black ${theme.text}`}>{profile.currentStreak} <span className="text-lg font-bold text-orange-500">Days</span></p>
+          <Card className={`rounded-2xl ${theme.card} border ${theme.border} shadow-lg p-6 backdrop-blur-xl`}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 rounded-xl bg-orange-500/10">
+                <Flame className="w-6 h-6 text-orange-500" />
               </div>
-              <div className="w-16 h-16 rounded-2xl bg-orange-500/10 flex items-center justify-center border border-orange-500/30 shadow-[inset_0_0_20px_rgba(249,115,22,0.1)] group-hover:scale-110 transition-transform">
-                <Flame className="w-8 h-8 text-orange-500 drop-shadow-[0_0_12px_rgba(249,115,22,0.6)]" />
-              </div>
-            </CardContent>
+              <Badge variant="secondary" className="bg-orange-500/10 text-orange-500 border-0">
+                {profile.currentStreak} days
+              </Badge>
+            </div>
+            <p className={`text-sm ${theme.muted} mb-1`}>Current Streak</p>
+            <p className={`text-3xl font-black ${theme.text}`}>{profile.currentStreak}</p>
+            <div className="mt-4 flex items-center gap-2">
+              <Flame className="w-4 h-4 text-orange-500" />
+              <span className={`text-xs ${theme.muted}`}>Longest: {profile.longestStreak} days</span>
+            </div>
           </Card>
         </motion.div>
 
         <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
-          <Card className={`rounded-3xl ${theme.card} border border-emerald-500/20 shadow-lg hover:shadow-emerald-500/10 transition-all h-full relative overflow-hidden group`}>
-            <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <CardContent className="p-8 flex items-center justify-between h-full relative z-10">
-              <div>
-                <p className={`text-xs font-bold uppercase tracking-widest ${theme.muted} mb-2`}>Assessment Avg</p>
-                <p className={`text-4xl font-black ${theme.text}`}>{profile.averageMastery}<span className="text-2xl text-emerald-500">%</span></p>
+          <Card className={`rounded-2xl ${theme.card} border ${theme.border} shadow-lg p-6 backdrop-blur-xl`}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 rounded-xl bg-emerald-500/10">
+                <Target className="w-6 h-6 text-emerald-500" />
               </div>
-              <div className="w-16 h-16 rounded-2xl bg-emerald-500/10 flex items-center justify-center border border-emerald-500/30 shadow-[inset_0_0_20px_rgba(16,185,129,0.1)] group-hover:scale-110 transition-transform">
-                <Target className="w-8 h-8 text-emerald-500 drop-shadow-[0_0_12px_rgba(16,185,129,0.6)]" />
+              <Badge variant="secondary" className="bg-emerald-500/10 text-emerald-500 border-0">
+                Mastery
+              </Badge>
+            </div>
+            <p className={`text-sm ${theme.muted} mb-1`}>Average Mastery</p>
+            <p className={`text-3xl font-black ${theme.text}`}>{profile.averageMastery}%</p>
+            <div className="mt-4 flex items-center gap-2">
+              <div className={`w-full h-1.5 ${theme.inputBg} rounded-full overflow-hidden`}>
+                <motion.div 
+                  initial={{ width: 0 }}
+                  animate={{ width: `${profile.averageMastery}%` }}
+                  className={`h-full bg-gradient-to-r ${theme.gradient} rounded-full`}
+                />
               </div>
-            </CardContent>
+            </div>
+          </Card>
+        </motion.div>
+
+        <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
+          <Card className={`rounded-2xl ${theme.card} border ${theme.border} shadow-lg p-6 backdrop-blur-xl`}>
+            <div className="flex items-center justify-between mb-4">
+              <div className="p-3 rounded-xl bg-indigo-500/10">
+                <Clock className="w-6 h-6 text-indigo-500" />
+              </div>
+              <Badge variant="secondary" className="bg-indigo-500/10 text-indigo-500 border-0">
+                Total
+              </Badge>
+            </div>
+            <p className={`text-sm ${theme.muted} mb-1`}>Study Time</p>
+            <p className={`text-3xl font-black ${theme.text}`}>{Math.floor(profile.totalStudyMinutes / 60)}<span className="text-base font-medium ml-1">hr</span></p>
+            <div className="mt-4 flex items-center gap-2">
+              <Timer className="w-4 h-4 text-indigo-500" />
+              <span className={`text-xs ${theme.muted}`}>{profile.totalStudyMinutes % 60} min today</span>
+            </div>
           </Card>
         </motion.div>
       </div>
 
-      {/* Action Split */}
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        
-        {/* Mission Control (Takes up 2/3) */}
-        <div className="xl:col-span-2 space-y-4">
-          <h3 className={`text-sm font-bold uppercase tracking-widest ${theme.muted} pl-2 flex items-center gap-2`}>
-            <Zap className="w-4 h-4" /> Active Directive
-          </h3>
-          
+      {/* Main Overview Grid */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        {/* Left Column (2/3) - Progress and Timeline */}
+        <div className="lg:col-span-2 space-y-6">
+          {/* Curriculum Progress */}
           {hasNoCurriculum ? (
-            <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-12 text-center group cursor-pointer hover:border-indigo-500 transition-colors shadow-sm`}>
-              <div className={`w-24 h-24 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6 group-hover:scale-110 transition-transform`}>
+            <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-12 text-center`}>
+              <div className={`w-24 h-24 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6`}>
                 <Database className={`w-12 h-12 ${theme.accent}`} />
               </div>
-              <h2 className={`text-2xl font-bold ${theme.text} mb-3`}>Data Matrix Empty</h2>
-              <p className={`${theme.muted} max-w-md mx-auto mb-8 text-sm`}>Establish a connection by uploading your syllabus. The AI will immediately construct your personalized learning pathway.</p>
+              <h2 className={`text-2xl font-bold ${theme.text} mb-3`}>No Active Curriculum</h2>
+              <p className={`${theme.muted} max-w-md mx-auto mb-8`}>Your learning matrix is empty. Upload a syllabus to begin your personalized journey.</p>
               <Link href="/onboarding">
-                <Button className={`h-14 px-10 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-xl hover:shadow-2xl hover:-translate-y-1 transition-all`}>
-                  <Upload className="w-5 h-5 mr-3" /> Inject Syllabus
+                <Button className={`h-12 px-8 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-lg hover:shadow-xl`}>
+                  <Upload className="w-5 h-5 mr-2" /> Inject Syllabus
                 </Button>
               </Link>
             </Card>
-          ) : nextChapterInfo ? (
-            <motion.div whileHover={{ scale: 1.01 }} transition={{ duration: 0.2 }}>
+          ) : (
+            <>
+              <Card className={`rounded-3xl ${theme.card} ${theme.border} shadow-xl overflow-hidden backdrop-blur-xl`}>
+                <CardHeader className={`border-b ${theme.border} pb-6`}>
+                  <CardTitle className={`text-xl font-black ${theme.text} flex items-center gap-3`}>
+                    <Orbit className={`w-6 h-6 ${theme.accent}`} /> Neural Pathway Progress
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="pt-8 space-y-6">
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm font-bold">
+                      <span className={theme.muted}>Overall Completion</span>
+                      <span className={theme.accent}>{overallProgress}%</span>
+                    </div>
+                    <Progress value={overallProgress} className={`h-3 ${theme.inputBg} [&>div]:bg-gradient-to-r [&>div]:${theme.gradient} shadow-inner`} />
+                    <p className={`text-xs ${theme.muted} text-right`}>{completedChapters} of {totalChapters} chapters mastered</p>
+                  </div>
+
+                  {/* Subject Breakdown */}
+                  {curriculums[0]?.subjects.map(sub => {
+                    const subCompleted = sub.chapters.filter(ch => ch.progress?.some(p => p.completedAt)).length;
+                    const subProgress = sub.chapters.length > 0 ? Math.round((subCompleted / sub.chapters.length) * 100) : 0;
+                    return (
+                      <div key={sub.id} className="space-y-1">
+                        <div className="flex justify-between text-xs font-bold">
+                          <span className={theme.text}>{sub.name}</span>
+                          <span className={theme.accent}>{subProgress}%</span>
+                        </div>
+                        <Progress value={subProgress} className={`h-2 ${theme.inputBg} [&>div]:${theme.progressBar}`} />
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+
+              {/* Upcoming Timeline */}
+              <Card className={`rounded-3xl ${theme.card} ${theme.border} shadow-xl overflow-hidden backdrop-blur-xl`}>
+                <CardHeader className={`border-b ${theme.border} pb-6 flex flex-row items-center justify-between`}>
+                  <CardTitle className={`text-xl font-black ${theme.text} flex items-center gap-3`}>
+                    <Calendar className={`w-6 h-6 ${theme.accent}`} /> Upcoming Chapters
+                  </CardTitle>
+                  <Badge className={`${theme.accentLight} ${theme.accent} border-0`}>Next in queue</Badge>
+                </CardHeader>
+                <CardContent className="pt-8">
+                  <div className="space-y-6">
+                    {upcomingChapters.slice(0, 3).map((item, idx) => (
+                      <motion.div
+                        key={item.chapter.id}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: idx * 0.1 }}
+                        className="flex items-center gap-4 group cursor-pointer"
+                        onClick={() => router.push(`/lesson/chapter/${item.chapter.id}`)}
+                      >
+                        <div className={`relative w-12 h-12 rounded-2xl ${theme.accentLight} flex items-center justify-center group-hover:scale-110 transition-transform`}>
+                          <div className={`absolute -inset-1 bg-gradient-to-r ${theme.gradient} rounded-3xl opacity-0 group-hover:opacity-30 blur-md`} />
+                          <BookOpen className={`w-6 h-6 ${theme.accent} relative z-10`} />
+                        </div>
+                        <div className="flex-1">
+                          <p className={`font-bold ${theme.text} group-hover:${theme.accent} transition-colors`}>
+                            {item.subjectName}: {item.chapter.title}
+                          </p>
+                          <p className={`text-xs ${theme.muted} flex items-center gap-1 mt-1`}>
+                            <Clock className="w-3 h-3" /> Est. {item.chapter.estimatedMinutes} min
+                            {item.eta && <span className="ml-2">• ETA {item.eta}</span>}
+                          </p>
+                        </div>
+                        <ChevronRight className={`w-5 h-5 ${theme.muted} group-hover:${theme.accent} group-hover:translate-x-1 transition-all`} />
+                      </motion.div>
+                    ))}
+                    {upcomingChapters.length === 0 && (
+                      <p className={`text-center ${theme.muted} py-8`}>All chapters completed. Great job!</p>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+
+        {/* Right Column (1/3) - Next Chapter & Achievements */}
+        <div className="space-y-6">
+          {/* Next Chapter Card */}
+          {!hasNoCurriculum && upcomingChapters.length > 0 && (
+            <motion.div whileHover={{ scale: 1.02 }} transition={{ type: "spring", stiffness: 300 }}>
               <Card className={`rounded-3xl ${theme.card} border-2 border-indigo-500/30 shadow-xl overflow-hidden relative group`}>
                 <div className={`absolute top-0 left-0 w-1.5 h-full bg-gradient-to-b ${theme.gradient}`} />
                 <div className="absolute top-0 right-0 w-64 h-64 bg-indigo-500/5 rounded-full blur-[80px] group-hover:bg-indigo-500/10 transition-colors" />
-                <CardContent className="p-8 relative z-10 flex flex-col md:flex-row items-center justify-between gap-6">
-                  <div className="flex-1">
-                    <Badge className={`mb-3 ${theme.accentLight} ${theme.accent} border-0 px-3 py-1.5 text-[10px] uppercase tracking-widest font-bold shadow-sm`}>
-                      <Star className="w-3 h-3 mr-1 inline-block" /> Priority Node • {nextChapterInfo.subjectName}
-                    </Badge>
-                    <h3 className={`text-2xl md:text-3xl font-black ${theme.text} mb-3 leading-tight`}>
-                      CH {nextChapterInfo.chapter.chapterNumber}: {nextChapterInfo.chapter.title}
-                    </h3>
-                    <div className="flex items-center gap-4 text-xs font-bold text-slate-500 uppercase tracking-widest">
-                      <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
-                        <Clock className="w-4 h-4" /> Est. {nextChapterInfo.chapter.estimatedMinutes} Min
-                      </span>
-                    </div>
+                <CardContent className="p-8 relative z-10">
+                  <Badge className={`mb-3 ${theme.accentLight} ${theme.accent} border-0 px-3 py-1.5 text-[10px] uppercase tracking-widest font-bold shadow-sm`}>
+                    <Star className="w-3 h-3 mr-1 inline-block" /> Priority Node
+                  </Badge>
+                  <h3 className={`text-2xl font-black ${theme.text} mb-2 leading-tight`}>
+                    {upcomingChapters[0].subjectName}
+                  </h3>
+                  <p className={`text-sm ${theme.muted} mb-4 line-clamp-2`}>
+                    {upcomingChapters[0].chapter.title}
+                  </p>
+                  <div className="flex items-center gap-3 mb-6 text-xs font-bold text-slate-500 uppercase tracking-widest">
+                    <span className="flex items-center gap-1 bg-slate-100 dark:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700">
+                      <Clock className="w-4 h-4" /> {upcomingChapters[0].chapter.estimatedMinutes} Min
+                    </span>
                   </div>
-                  <Link href={`/lesson/chapter/${nextChapterInfo.chapter.id}`}>
-                    <Button className={`w-full md:w-auto h-16 px-8 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-[0_0_20px_rgba(99,102,241,0.4)] hover:shadow-[0_0_30px_rgba(99,102,241,0.6)] hover:-translate-y-1 transition-all group-hover:scale-105`}>
-                      <PlayCircle className="w-6 h-6 mr-2" /> Initialize
+                  <Link href={`/lesson/chapter/${upcomingChapters[0].chapter.id}`}>
+                    <Button className={`w-full h-12 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-[0_0_20px_rgba(99,102,241,0.4)] hover:shadow-[0_0_30px_rgba(99,102,241,0.6)] hover:-translate-y-1 transition-all group-hover:scale-105`}>
+                      <PlayCircle className="w-5 h-5 mr-2" /> Initialize
                     </Button>
                   </Link>
                 </CardContent>
               </Card>
             </motion.div>
-          ) : (
-            <Card className={`rounded-3xl ${theme.card} border-2 border-emerald-500/30 p-12 text-center shadow-lg bg-emerald-500/5`}>
-              <div className="w-24 h-24 bg-emerald-500/20 rounded-full flex items-center justify-center mx-auto mb-6 shadow-[0_0_30px_rgba(16,185,129,0.3)]">
-                <CheckCircle className={`w-12 h-12 text-emerald-500`} />
-              </div>
-              <h3 className={`text-2xl font-black ${theme.text} mb-2`}>Matrix Conquered</h3>
-              <p className={`${theme.muted} max-w-sm mx-auto`}>You have achieved 100% mastery over all currently injected curriculums. Awaiting new data.</p>
-            </Card>
           )}
-        </div>
 
-        {/* Support System (Takes up 1/3) */}
-        <div className="space-y-4">
-          <h3 className={`text-sm font-bold uppercase tracking-widest ${theme.muted} pl-2 flex items-center gap-2`}>
-            <Activity className="w-4 h-4" /> Support Node
-          </h3>
-          <Link href="/doubts" className="block h-full">
-            <Card className={`rounded-3xl border border-white/10 bg-gradient-to-b from-slate-800 to-black text-white hover:scale-[1.02] transition-transform cursor-pointer relative overflow-hidden shadow-2xl h-[calc(100%-2rem)] min-h-[250px]`}>
-              <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay" />
-              <div className="absolute -top-10 -right-10 w-48 h-48 bg-indigo-500/40 blur-[70px] rounded-full" />
-              <div className="absolute -bottom-10 -left-10 w-40 h-40 bg-cyan-500/30 blur-[60px] rounded-full" />
-              
-              <CardContent className="p-8 relative z-10 flex flex-col items-center justify-center h-full text-center">
-                <div className="p-4 bg-white/5 rounded-3xl backdrop-blur-xl border border-white/10 mb-6 shadow-[0_0_30px_rgba(99,102,241,0.3)]">
-                  <BrainCircuit className="w-12 h-12 text-indigo-300" />
-                </div>
-                <h3 className="text-2xl font-black mb-2 tracking-tight">AI Oracle Link</h3>
-                <p className="text-sm text-slate-300 mb-8 font-medium px-4">Encountered an anomaly? Connect to the neural engine for instant clarity and concept breakdown.</p>
-                <div className="flex items-center text-white font-bold text-xs uppercase tracking-widest bg-indigo-500/20 px-6 py-3 rounded-xl border border-indigo-500/30 backdrop-blur-sm hover:bg-indigo-500/40 transition-colors w-full justify-center">
-                  Establish Uplink <ArrowRight className="w-4 h-4 ml-2" />
-                </div>
-              </CardContent>
-            </Card>
-          </Link>
+          {/* Quick Stats Card */}
+          <Card className={`rounded-3xl ${theme.card} ${theme.border} shadow-xl overflow-hidden backdrop-blur-xl`}>
+            <CardHeader className={`border-b ${theme.border} pb-6`}>
+              <CardTitle className={`text-lg font-black ${theme.text} flex items-center gap-3`}>
+                <Activity className={`w-5 h-5 ${theme.accent}`} /> Neural Metrics
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="pt-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <span className={`text-sm ${theme.muted}`}>Tests Completed</span>
+                <span className={`font-bold text-xl ${theme.text}`}>{profile.testsCompleted}</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className={`text-sm ${theme.muted}`}>Mastery Average</span>
+                <span className={`font-bold text-xl ${theme.text}`}>{profile.averageMastery}%</span>
+              </div>
+              <div className="flex justify-between items-center">
+                <span className={`text-sm ${theme.muted}`}>Total Study Time</span>
+                <span className={`font-bold text-xl ${theme.text}`}>{Math.floor(profile.totalStudyMinutes / 60)}h {profile.totalStudyMinutes % 60}m</span>
+              </div>
+              <div className="pt-4 border-t border-slate-200/50 dark:border-slate-800/50">
+                <Button variant="outline" onClick={() => router.push('/profile')} className={`w-full rounded-xl ${theme.border} ${theme.text} hover:${theme.accentLight} text-sm`}>
+                  View Full Profile
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </div>
     </motion.div>
   );
 
   // ============================================================================
-  // RENDER: CURRICULUM (with empty state)
+  // RENDER: CURRICULUM (with horizontal subject tabs)
   // ============================================================================
-  const renderCurriculum = () => (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-200/50">
-        <div>
-          <h2 className={`text-3xl font-black ${theme.text} tracking-tight`}>Curriculum Matrix</h2>
-          <p className={`text-sm ${theme.muted} mt-1`}>Your complete personalized learning pathway.</p>
-        </div>
-        {curriculums.length > 0 && (
+  const renderCurriculum = () => {
+    if (hasNoCurriculum) {
+      return (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-16 text-center`}>
+            <div className={`w-28 h-28 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6`}>
+              <Database className={`w-14 h-14 ${theme.accent}`} />
+            </div>
+            <h3 className={`text-2xl font-black ${theme.text} mb-3`}>No Curriculum Found</h3>
+            <p className={`${theme.muted} max-w-md mx-auto mb-8`}>Your learning matrix is empty. Upload your syllabus to begin your personalized journey.</p>
+            <Link href="/onboarding">
+              <Button className={`h-14 px-10 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-lg hover:shadow-xl`}>
+                <Upload className="w-5 h-5 mr-3" /> Upload Syllabus
+              </Button>
+            </Link>
+          </Card>
+        </motion.div>
+      );
+    }
+
+    // Get all subjects from the first curriculum (or combine multiple)
+    const allSubjects = curriculums[0]?.subjects || [];
+
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-3xl font-black ${theme.text} tracking-tight`}>Matrix Curriculum</h2>
           <Button variant="outline" size="sm" onClick={fetchData} className="rounded-xl">
             <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh
           </Button>
-        )}
-      </div>
-      
-      {hasNoCurriculum ? (
-        <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-16 text-center`}>
-          <div className={`w-28 h-28 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6`}>
-            <Database className={`w-14 h-14 ${theme.accent}`} />
+        </div>
+
+        {/* Horizontal Scrollable Subject Tabs */}
+        <div className="overflow-x-auto scrollbar-hide pb-2">
+          <div className="flex gap-2 min-w-max">
+            {allSubjects.map((sub) => (
+              <button
+                key={sub.id}
+                onClick={() => setSelectedSubject(sub.name)}
+                className={`px-6 py-3 rounded-full font-bold text-sm transition-all ${
+                  selectedSubject === sub.name
+                    ? `bg-gradient-to-r ${theme.gradient} text-white shadow-lg`
+                    : `${theme.card} ${theme.border} border hover:${theme.accentLight} hover:border-indigo-400`
+                }`}
+              >
+                {sub.name}
+              </button>
+            ))}
           </div>
-          <h3 className={`text-2xl font-black ${theme.text} mb-3`}>No Curriculum Found</h3>
-          <p className={`${theme.muted} max-w-md mx-auto mb-8`}>Your learning matrix is empty. Upload your syllabus to begin your personalized journey.</p>
-          <Link href="/onboarding">
-            <Button className={`h-14 px-10 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-lg hover:shadow-xl`}>
-              <Upload className="w-5 h-5 mr-3" /> Upload Syllabus
-            </Button>
-          </Link>
-        </Card>
-      ) : refreshing ? (
-        <SubjectSkeleton />
-      ) : (
-        curriculums.map((curr) => (
-          <div key={curr.id} className="space-y-8">
-            {curr.subjects.map((sub) => {
-              const completed = sub.chapters.filter(ch => ch.progress?.some(p => p.completedAt)).length;
-              const progress = sub.chapters.length > 0 ? (completed / sub.chapters.length) * 100 : 0;
+        </div>
+
+        {/* Display selected subject's chapters */}
+        {allSubjects.filter(sub => sub.name === selectedSubject).map((sub) => {
+          const completed = sub.chapters.filter(ch => ch.progress?.some(p => p.completedAt)).length;
+          const progress = sub.chapters.length > 0 ? (completed / sub.chapters.length) * 100 : 0;
+          return (
+            <Card key={sub.id} className={`rounded-3xl ${theme.card} ${theme.border} border overflow-hidden shadow-xl`}>
+              {/* Subject Header */}
+              <div className={`p-6 border-b ${theme.border} ${theme.isLight ? 'bg-slate-50/50' : 'bg-black/20'} flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden`}>
+                <div className={`absolute left-0 top-0 bottom-0 w-2 bg-gradient-to-b ${theme.gradient}`} />
+                <div className="pl-4">
+                  <h3 className={`text-2xl font-black ${theme.text} flex items-center gap-3 tracking-tight`}>
+                    <BookOpen className={`w-6 h-6 ${theme.accent}`} /> {sub.name}
+                  </h3>
+                  <p className={`text-sm font-medium mt-1 ${theme.muted}`}>{completed} of {sub.chapters.length} Modules Conquered</p>
+                </div>
+                <div className="w-full md:w-72 bg-white/50 dark:bg-black/20 p-4 rounded-2xl border border-slate-200/50 dark:border-slate-800/50 backdrop-blur-sm">
+                  <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest mb-2">
+                    <span className={theme.muted}>Subject Mastery</span>
+                    <span className={theme.accent}>{Math.round(progress)}%</span>
+                  </div>
+                  <Progress value={progress} className={`h-2 ${theme.isLight ? 'bg-slate-200' : 'bg-slate-800'} [&>div]:${theme.accentBg} shadow-inner`} />
+                </div>
+              </div>
               
-              return (
-                <Card key={sub.id} className={`rounded-3xl ${theme.card} ${theme.border} border overflow-hidden shadow-xl`}>
-                  {/* Subject Header */}
-                  <div className={`p-6 border-b ${theme.border} ${theme.isLight ? 'bg-slate-50/50' : 'bg-black/20'} flex flex-col md:flex-row md:items-center justify-between gap-6 relative overflow-hidden`}>
-                    <div className={`absolute left-0 top-0 bottom-0 w-2 bg-gradient-to-b ${theme.gradient}`} />
-                    <div className="pl-4">
-                      <h3 className={`text-2xl font-black ${theme.text} flex items-center gap-3 tracking-tight`}>
-                        <BookOpen className={`w-6 h-6 ${theme.accent}`} /> {sub.name}
-                      </h3>
-                      <p className={`text-sm font-medium mt-1 ${theme.muted}`}>{completed} of {sub.chapters.length} Modules Conquered</p>
-                    </div>
-                    <div className="w-full md:w-72 bg-white/50 dark:bg-black/20 p-4 rounded-2xl border border-slate-200/50 dark:border-slate-800/50 backdrop-blur-sm">
-                      <div className="flex justify-between text-[10px] font-bold uppercase tracking-widest mb-2">
-                        <span className={theme.muted}>Subject Mastery</span>
-                        <span className={theme.accent}>{Math.round(progress)}%</span>
-                      </div>
-                      <Progress value={progress} className={`h-2 ${theme.isLight ? 'bg-slate-200' : 'bg-slate-800'} [&>div]:${theme.accentBg} shadow-inner`} />
-                    </div>
-                  </div>
+              {/* Chapters Grid */}
+              <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
+                {sub.chapters.map((ch, idx) => {
+                  const isCompleted = ch.progress?.some(p => p.completedAt !== null) ?? false;
+                  const isLocked = ch.status === 'PENDING' || (idx > 0 && !(sub.chapters[idx - 1].progress?.some(p => p.completedAt !== null) ?? false));
                   
-                  {/* Chapters Grid */}
-                  <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-                    {sub.chapters.map((ch, idx) => {
-                      const isCompleted = ch.progress?.some(p => p.completedAt !== null) ?? false;
-                      const isLocked = ch.status === 'PENDING' || (idx > 0 && !(sub.chapters[idx - 1].progress?.some(p => p.completedAt !== null) ?? false));
-                      
-                      return (
-                        <Link href={isLocked ? '#' : `/lesson/chapter/${ch.id}`} key={ch.id}>
-                          <div className={`p-6 rounded-2xl border transition-all h-full flex flex-col relative overflow-hidden group ${
-                            isCompleted ? `bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5` : 
-                            isLocked ? `${theme.isLight ? 'bg-slate-50' : 'bg-slate-900/50'} border-transparent opacity-60 cursor-not-allowed` : 
-                            `${theme.card} ${theme.border} hover:border-${theme.accent.split('-')[1]}-400 hover:shadow-xl cursor-pointer`
-                          }`}>
-                            {!isLocked && !isCompleted && (
-                              <div className={`absolute top-0 right-0 w-32 h-32 ${theme.accentLight} blur-[50px] rounded-full opacity-0 group-hover:opacity-100 transition-opacity`} />
-                            )}
-                            
-                            <div className="flex justify-between items-start mb-5 relative z-10">
-                              <Badge variant="outline" className={`font-mono text-xs border border-current/20 px-2 py-1 ${isCompleted ? 'bg-emerald-100 text-emerald-700' : isLocked ? 'text-slate-400' : `${theme.accentLight} ${theme.accent}`}`}>
-                                CH {ch.chapterNumber}
-                              </Badge>
-                              {isCompleted ? (
-                                <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center border border-emerald-200">
-                                  <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                                </div>
-                              ) : isLocked ? (
-                                <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
-                                  <Lock className={`w-4 h-4 text-slate-500`} />
-                                </div>
-                              ) : (
-                                <div className={`w-8 h-8 rounded-full ${theme.accentLight} flex items-center justify-center border border-current/10 group-hover:scale-110 transition-transform`}>
-                                  <PlayCircle className={`w-4 h-4 ${theme.accent}`} />
-                                </div>
-                              )}
+                  return (
+                    <Link href={isLocked ? '#' : `/lesson/chapter/${ch.id}`} key={ch.id}>
+                      <div className={`p-6 rounded-2xl border transition-all h-full flex flex-col relative overflow-hidden group ${
+                        isCompleted ? `bg-emerald-500/5 border-emerald-500/20 hover:border-emerald-500/40 hover:shadow-lg hover:shadow-emerald-500/5` : 
+                        isLocked ? `${theme.isLight ? 'bg-slate-50' : 'bg-slate-900/50'} border-transparent opacity-60 cursor-not-allowed` : 
+                        `${theme.card} ${theme.border} hover:border-${theme.accent.split('-')[1]}-400 hover:shadow-xl cursor-pointer`
+                      }`}>
+                        {!isLocked && !isCompleted && (
+                          <div className={`absolute top-0 right-0 w-32 h-32 ${theme.accentLight} blur-[50px] rounded-full opacity-0 group-hover:opacity-100 transition-opacity`} />
+                        )}
+                        
+                        <div className="flex justify-between items-start mb-5 relative z-10">
+                          <Badge variant="outline" className={`font-mono text-xs border border-current/20 px-2 py-1 ${isCompleted ? 'bg-emerald-100 text-emerald-700' : isLocked ? 'text-slate-400' : `${theme.accentLight} ${theme.accent}`}`}>
+                            CH {ch.chapterNumber}
+                          </Badge>
+                          {isCompleted ? (
+                            <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center border border-emerald-200">
+                              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                             </div>
-                            
-                            <h4 className={`font-bold text-lg mb-3 ${theme.text} line-clamp-2 relative z-10 leading-snug group-hover:${theme.accent} transition-colors`}>
-                              {ch.title}
-                            </h4>
-                            
-                            <div className="mt-auto flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-slate-500 relative z-10 pt-4 border-t border-slate-200/50 dark:border-slate-700/50">
-                              <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {ch.estimatedMinutes} Min</span>
+                          ) : isLocked ? (
+                            <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center">
+                              <Lock className={`w-4 h-4 text-slate-500`} />
                             </div>
-                          </div>
+                          ) : (
+                            <div className={`w-8 h-8 rounded-full ${theme.accentLight} flex items-center justify-center border border-current/10 group-hover:scale-110 transition-transform`}>
+                              <PlayCircle className={`w-4 h-4 ${theme.accent}`} />
+                            </div>
+                          )}
+                        </div>
+                        
+                        <h4 className={`font-bold text-lg mb-3 ${theme.text} line-clamp-2 relative z-10 leading-snug group-hover:${theme.accent} transition-colors`}>
+                          {ch.title}
+                        </h4>
+                        
+                        <div className="mt-auto flex items-center gap-3 text-[10px] font-bold uppercase tracking-widest text-slate-500 relative z-10 pt-4 border-t border-slate-200/50 dark:border-slate-700/50">
+                          <span className="flex items-center gap-1.5"><Clock className="w-3.5 h-3.5" /> {ch.estimatedMinutes} Min</span>
+                        </div>
+                      </div>
+                    </Link>
+                  );
+                })}
+              </div>
+            </Card>
+          );
+        })}
+      </motion.div>
+    );
+  };
+
+  // ============================================================================
+  // RENDER: ASSESSMENTS (with subject tabs)
+  // ============================================================================
+  const renderAssessments = () => {
+    if (hasNoCurriculum) {
+      return (
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+          <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-16 text-center`}>
+            <div className={`w-28 h-28 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6`}>
+              <Target className={`w-14 h-14 ${theme.accent}`} />
+            </div>
+            <h3 className={`text-2xl font-black ${theme.text} mb-3`}>No Assessments Available</h3>
+            <p className={`${theme.muted} max-w-md mx-auto mb-8`}>Complete chapters to unlock assessments and track your mastery.</p>
+            <Link href="/onboarding">
+              <Button className={`h-14 px-10 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-lg hover:shadow-xl`}>
+                <Upload className="w-5 h-5 mr-3" /> Upload Syllabus First
+              </Button>
+            </Link>
+          </Card>
+        </motion.div>
+      );
+    }
+
+    // Group assessments by subject
+    const assessmentsBySubject = generatedAssessments.reduce((acc, a) => {
+      if (!acc[a.subject]) acc[a.subject] = [];
+      acc[a.subject].push(a);
+      return acc;
+    }, {} as Record<string, Assessment[]>);
+    const subjectNames = Object.keys(assessmentsBySubject);
+
+    // Ensure selectedSubject is valid
+    if (!selectedSubject || !assessmentsBySubject[selectedSubject]) {
+      setSelectedSubject(subjectNames[0] || null);
+    }
+
+    return (
+      <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
+        <div className="flex items-center justify-between mb-4">
+          <h2 className={`text-3xl font-black ${theme.text} tracking-tight`}>Assessment Protocol</h2>
+          <Button variant="outline" size="sm" onClick={fetchData} className="rounded-xl">
+            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        </div>
+
+        {/* Horizontal Scrollable Subject Tabs */}
+        {subjectNames.length > 0 && (
+          <div className="overflow-x-auto scrollbar-hide pb-2">
+            <div className="flex gap-2 min-w-max">
+              {subjectNames.map((sub) => (
+                <button
+                  key={sub}
+                  onClick={() => setSelectedSubject(sub)}
+                  className={`px-6 py-3 rounded-full font-bold text-sm transition-all ${
+                    selectedSubject === sub
+                      ? `bg-gradient-to-r ${theme.gradient} text-white shadow-lg`
+                      : `${theme.card} ${theme.border} border hover:${theme.accentLight} hover:border-indigo-400`
+                  }`}
+                >
+                  {sub}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Assessments Grid for selected subject */}
+        {selectedSubject && assessmentsBySubject[selectedSubject] && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {assessmentsBySubject[selectedSubject].map((assessment) => {
+              const isCompleted = assessment.status === 'completed';
+              const isLocked = assessment.status === 'locked';
+
+              return (
+                <Card key={`assessment-${assessment.id}`} className={`rounded-3xl ${theme.card} ${theme.border} border overflow-hidden relative group ${isLocked ? 'opacity-60 grayscale-[0.3]' : 'hover:shadow-2xl transition-all hover:-translate-y-1'}`}>
+                  {!isLocked && !isCompleted && (
+                    <div className={`absolute -right-10 -bottom-10 w-40 h-40 ${theme.accentBg} opacity-10 blur-[50px] rounded-full group-hover:opacity-20 transition-opacity`} />
+                  )}
+                  
+                  <CardContent className="p-8 relative z-10">
+                    <div className="flex justify-between items-start mb-6">
+                      <Badge className={`px-3 py-1.5 text-xs font-bold uppercase tracking-widest border border-current/20 ${isCompleted ? 'bg-emerald-500/10 text-emerald-600' : isLocked ? 'bg-slate-500/10 text-slate-500' : `${theme.accentLight} ${theme.accent}`}`}>
+                        {assessment.subject}
+                      </Badge>
+                      {isCompleted ? (
+                        <div className="p-2 bg-emerald-100 rounded-xl border border-emerald-200 shadow-sm">
+                          <Trophy className="w-5 h-5 text-emerald-600" />
+                        </div>
+                      ) : isLocked ? (
+                        <div className="p-2 bg-slate-100 rounded-xl">
+                          <Lock className="w-5 h-5 text-slate-400" />
+                        </div>
+                      ) : (
+                        <div className={`p-2 ${theme.accentLight} rounded-xl border border-current/10 shadow-sm`}>
+                          <Target className={`w-5 h-5 ${theme.accent} animate-pulse`} />
+                        </div>
+                      )}
+                    </div>
+                    
+                    <h3 className={`font-black text-xl ${theme.text} mb-2 leading-tight line-clamp-2`}>{assessment.chapterTitle}</h3>
+                    <p className={`text-xs font-bold uppercase tracking-widest ${theme.muted} mb-8`}>Module Evaluation</p>
+                    
+                    {isCompleted ? (
+                      <div className="bg-emerald-500/5 p-5 rounded-2xl border border-emerald-500/20 shadow-inner flex justify-between items-center">
+                        <div>
+                          <p className={`text-[10px] uppercase tracking-widest text-emerald-600/70 font-bold mb-1`}>Score Achieved</p>
+                          <p className="text-4xl font-black text-emerald-600 drop-shadow-sm">{assessment.score}<span className="text-xl">%</span></p>
+                        </div>
+                        <Link href={`/assessment/${assessment.chapterId}`}>
+                          <Button size="icon" className={`w-12 h-12 rounded-xl bg-white text-emerald-600 hover:bg-emerald-50 hover:scale-105 border border-emerald-200 shadow-md transition-all`}>
+                            <RotateCcw className="w-5 h-5" />
+                          </Button>
                         </Link>
-                      );
-                    })}
-                  </div>
+                      </div>
+                    ) : isLocked ? (
+                      <div className="pt-6 border-t border-slate-200/50 flex flex-col items-center justify-center text-center">
+                        <Lock className="w-6 h-6 text-slate-300 mb-2" />
+                        <p className={`text-xs font-bold uppercase tracking-widest text-slate-400`}>
+                          Clear previous module to unlock
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="pt-6 border-t border-slate-200/50">
+                        <Link href={`/assessment/${assessment.chapterId}`}>
+                          <Button className={`w-full h-14 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-black tracking-widest uppercase text-sm shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all`}>
+                            <Zap className="w-4 h-4 mr-2" /> Initialize Test
+                          </Button>
+                        </Link>
+                      </div>
+                    )}
+                  </CardContent>
                 </Card>
               );
             })}
           </div>
-        ))
-      )}
-    </motion.div>
-  );
-
-  // ============================================================================
-  // RENDER: ASSESSMENTS (with retake and proper states)
-  // ============================================================================
-  const renderAssessments = () => (
-    <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <div className="flex items-center justify-between mb-8 pb-4 border-b border-slate-200/50">
-        <div>
-          <h2 className={`text-3xl font-black ${theme.text} tracking-tight`}>Assessment Protocol</h2>
-          <p className={`text-sm ${theme.muted} mt-1`}>Evaluate your neural synchronization across all modules.</p>
-        </div>
-        {generatedAssessments.length > 0 && (
-          <Button variant="outline" size="sm" onClick={fetchData} className="rounded-xl">
-            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-            Refresh
-          </Button>
         )}
-      </div>
 
-      {hasNoCurriculum ? (
-        <Card className={`rounded-3xl ${theme.card} ${theme.border} border border-dashed p-16 text-center`}>
-          <div className={`w-28 h-28 rounded-full ${theme.accentLight} flex items-center justify-center mx-auto mb-6`}>
-            <Target className={`w-14 h-14 ${theme.accent}`} />
-          </div>
-          <h3 className={`text-2xl font-black ${theme.text} mb-3`}>No Assessments Available</h3>
-          <p className={`${theme.muted} max-w-md mx-auto mb-8`}>Complete chapters to unlock assessments and track your mastery.</p>
-          <Link href="/onboarding">
-            <Button className={`h-14 px-10 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-bold text-lg shadow-lg hover:shadow-xl`}>
-              <Upload className="w-5 h-5 mr-3" /> Upload Syllabus First
-            </Button>
-          </Link>
-        </Card>
-      ) : refreshing ? (
-        <AssessmentSkeleton />
-      ) : generatedAssessments.length === 0 ? (
-        <Card className={`rounded-3xl ${theme.card} ${theme.border} p-12 text-center`}>
-          <CheckCircle className={`w-16 h-16 ${theme.accent} mx-auto mb-4`} />
-          <h3 className={`text-2xl font-black ${theme.text} mb-2`}>All Assessments Conquered</h3>
-          <p className={`${theme.muted} max-w-md mx-auto`}>You have completed every available assessment. New chapters will unlock more challenges.</p>
-        </Card>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {generatedAssessments.map((assessment) => {
-            const isCompleted = assessment.status === 'completed';
-            const isLocked = assessment.status === 'locked';
-
-            return (
-              <Card key={`assessment-${assessment.id}`} className={`rounded-3xl ${theme.card} ${theme.border} border overflow-hidden relative group ${isLocked ? 'opacity-60 grayscale-[0.3]' : 'hover:shadow-2xl transition-all hover:-translate-y-1'}`}>
-                {!isLocked && !isCompleted && (
-                  <div className={`absolute -right-10 -bottom-10 w-40 h-40 ${theme.accentBg} opacity-10 blur-[50px] rounded-full group-hover:opacity-20 transition-opacity`} />
-                )}
-                
-                <CardContent className="p-8 relative z-10">
-                  <div className="flex justify-between items-start mb-6">
-                    <Badge className={`px-3 py-1.5 text-xs font-bold uppercase tracking-widest border border-current/20 ${isCompleted ? 'bg-emerald-500/10 text-emerald-600' : isLocked ? 'bg-slate-500/10 text-slate-500' : `${theme.accentLight} ${theme.accent}`}`}>
-                      {assessment.subject}
-                    </Badge>
-                    {isCompleted ? (
-                      <div className="p-2 bg-emerald-100 rounded-xl border border-emerald-200 shadow-sm">
-                        <Trophy className="w-5 h-5 text-emerald-600" />
-                      </div>
-                    ) : isLocked ? (
-                      <div className="p-2 bg-slate-100 rounded-xl">
-                        <Lock className="w-5 h-5 text-slate-400" />
-                      </div>
-                    ) : (
-                      <div className={`p-2 ${theme.accentLight} rounded-xl border border-current/10 shadow-sm`}>
-                        <Target className={`w-5 h-5 ${theme.accent} animate-pulse`} />
-                      </div>
-                    )}
-                  </div>
-                  
-                  <h3 className={`font-black text-xl ${theme.text} mb-2 leading-tight line-clamp-2`}>{assessment.chapterTitle}</h3>
-                  <p className={`text-xs font-bold uppercase tracking-widest ${theme.muted} mb-8`}>Module Evaluation</p>
-                  
-                  {isCompleted ? (
-                    <div className="bg-emerald-500/5 p-5 rounded-2xl border border-emerald-500/20 shadow-inner flex justify-between items-center">
-                      <div>
-                        <p className={`text-[10px] uppercase tracking-widest text-emerald-600/70 font-bold mb-1`}>Score Achieved</p>
-                        <p className="text-4xl font-black text-emerald-600 drop-shadow-sm">{assessment.score}<span className="text-xl">%</span></p>
-                      </div>
-                      <Link href={`/assessment/${assessment.chapterId}`}>
-                        <Button size="icon" className={`w-12 h-12 rounded-xl bg-white text-emerald-600 hover:bg-emerald-50 hover:scale-105 border border-emerald-200 shadow-md transition-all`}>
-                          <RotateCcw className="w-5 h-5" />
-                        </Button>
-                      </Link>
-                    </div>
-                  ) : isLocked ? (
-                    <div className="pt-6 border-t border-slate-200/50 flex flex-col items-center justify-center text-center">
-                      <Lock className="w-6 h-6 text-slate-300 mb-2" />
-                      <p className={`text-xs font-bold uppercase tracking-widest text-slate-400`}>
-                        Clear previous module to unlock
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="pt-6 border-t border-slate-200/50">
-                      <Link href={`/assessment/${assessment.chapterId}`}>
-                        <Button className={`w-full h-14 rounded-2xl bg-gradient-to-r ${theme.gradient} text-white font-black tracking-widest uppercase text-sm shadow-lg hover:shadow-xl hover:scale-[1.02] transition-all`}>
-                          <Zap className="w-4 h-4 mr-2" /> Initialize Test
-                        </Button>
-                      </Link>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )
-          })}
-        </div>
-      )}
-    </motion.div>
-  );
+        {selectedSubject && (!assessmentsBySubject[selectedSubject] || assessmentsBySubject[selectedSubject].length === 0) && (
+          <Card className={`rounded-3xl ${theme.card} ${theme.border} p-12 text-center`}>
+            <CheckCircle className={`w-16 h-16 ${theme.accent} mx-auto mb-4`} />
+            <h3 className={`text-2xl font-black ${theme.text} mb-2`}>All Assessments Conquered</h3>
+            <p className={`${theme.muted} max-w-md mx-auto`}>You have completed every available assessment for this subject. New chapters will unlock more challenges.</p>
+          </Card>
+        )}
+      </motion.div>
+    );
+  };
 
   // ============================================================================
-  // RENDER: ACHIEVEMENTS
+  // RENDER: ACHIEVEMENTS (unchanged)
   // ============================================================================
   const renderAchievements = () => (
     <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -861,7 +1047,7 @@ function DashboardContent() {
         <motion.div animate={{ scale: [1, 1.1, 1], opacity: [0.03, 0.06, 0.03] }} transition={{ duration: 15, repeat: Infinity, ease: 'easeInOut', delay: 2 }} className={`absolute bottom-[-10%] right-[-10%] w-[800px] h-[800px] bg-gradient-to-br ${theme.gradient} rounded-full blur-[180px]`} />
       </div>
 
-      {/* HEADER */}
+      {/* HEADER (unchanged) */}
       <motion.header style={{ opacity: headerOpacity, filter: headerBlur, y: headerY }} className={`fixed top-0 w-full z-40 ${theme.card}/70 backdrop-blur-3xl border-b ${theme.border} shadow-sm transition-all duration-300`}>
         <div className="max-w-screen-2xl mx-auto px-4 h-20 flex items-center justify-between">
           
@@ -878,7 +1064,7 @@ function DashboardContent() {
             </Link>
           </div>
 
-          {/* Right: Notifications & Profile */}
+          {/* Right: Notifications & Profile (unchanged) */}
           <div className="flex items-center gap-5 relative">
             
             {/* Functional Notification Bell */}
@@ -962,7 +1148,7 @@ function DashboardContent() {
         </div>
       </motion.header>
 
-      {/* SIDEBAR DRAWER NAVIGATION */}
+      {/* SIDEBAR DRAWER NAVIGATION (unchanged) */}
       <AnimatePresence>
         {isSidebarOpen && (
           <>

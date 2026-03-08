@@ -1,3 +1,4 @@
+// app/api/chapter/[id]/progress/route.ts
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
@@ -7,13 +8,9 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const requestId = crypto.randomUUID();
-  const startTime = Date.now();
-
   try {
     const clientIp = getClientIdentifier(req);
     const rateLimit = await checkRateLimit(rateLimiters.profileWrite, clientIp);
-
     if (!rateLimit.success) {
       return NextResponse.json({ error: 'Too many requests.' }, { status: 429 });
     }
@@ -21,9 +18,7 @@ export async function POST(
     const supabase = await createServerSupabaseClient();
     const authResult = await supabase.auth.getUser();
     const user = authResult.data?.user;
-    const authError = authResult.error;
-
-    if (authError || !user) {
+    if (!user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
@@ -31,7 +26,7 @@ export async function POST(
     const chapterId = resolvedParams.id;
     const { readingTime, completedBlocks, currentBlockIndex } = await req.json();
 
-    // Verify chapter belongs to user
+    // Verify ownership
     const chapter = await prisma.chapter.findUnique({
       where: { id: chapterId },
       include: {
@@ -50,38 +45,33 @@ export async function POST(
       );
     }
 
-    // Update or create progress
+    // Update progress
     await prisma.progress.upsert({
       where: {
-        userId_chapterId: {
-          userId: user.id,
-          chapterId: chapterId,
-        },
+        userId_chapterId: { userId: user.id, chapterId },
       },
       update: {
         timeSpentSeconds: { increment: readingTime || 0 },
+        currentBlockIndex: currentBlockIndex ?? undefined,
+        completedBlockIds: completedBlocks?.length 
+          ? { set: completedBlocks } 
+          : undefined,
         updatedAt: new Date(),
         syncStatus: 'SYNCING',
       },
       create: {
         userId: user.id,
-        chapterId: chapterId,
+        chapterId,
         timeSpentSeconds: readingTime || 0,
+        currentBlockIndex: currentBlockIndex ?? 0,
+        completedBlockIds: completedBlocks || [],
         syncStatus: 'SYNCING',
       },
     });
 
-    const duration = Date.now() - startTime;
-    console.log(`[Chapter Progress] Saved in ${duration}ms | Request: ${requestId}`);
-
-    return NextResponse.json({
-      success: true,
-      message: 'Progress saved successfully.',
-    });
+    return NextResponse.json({ success: true, message: 'Progress saved.' });
   } catch (error: any) {
-    const duration = Date.now() - startTime;
-    console.error(`[Chapter Progress] Error in ${duration}ms | Request: ${requestId}`, error);
-
+    console.error('[Chapter Progress] Error:', error);
     return NextResponse.json(
       { error: 'Failed to save progress.' },
       { status: 500 }

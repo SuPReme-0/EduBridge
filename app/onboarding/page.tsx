@@ -324,6 +324,7 @@ function OnboardingContent() {
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [step, setStep] = useState(initialStep);
   const [direction, setDirection] = useState(1);
+  const [showReplaceWarning, setShowReplaceWarning] = useState(false);
   const [loading, setLoading] = useState(false);
   const [analyzingSyllabus, setAnalyzingSyllabus] = useState(false);
   const [error, setError] = useState('');
@@ -702,47 +703,54 @@ function OnboardingContent() {
     await saveProgress();
     router.push(fromProfile ? '/profile' : '/dashboard');
   };
+  const performGeneration = async () => {
+  setLoading(true);
+  setError('');
+  try {
+    await saveProgress();
+    const payload = {
+      educationPath,
+      classLevel,
+      board,
+      subjects: selectedSubjects,
+      extractedSyllabus,
+      referenceBooks: selectedBooks.length > 0
+        ? selectedBooks.map(b => ({ title: b.title, author: b.author, id: b.id }))
+        : ['AI_DEFAULT'],
+      interests: selectedInterests,
+      hobbies: selectedHobbies,
+      learningTempo: tempo,
+      currentVibe: vibe,
+    };
+    await fetch('/api/curriculum/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    updateProfile({
+      interests: selectedInterests,
+      hobbies: selectedHobbies,
+      learningTempo: tempo,
+      currentVibe: vibe,
+    });
+    localStorage.setItem('edubridge_theme', vibe);
+    localStorage.setItem('hasCurriculum', 'true');
+    router.push(fromProfile ? '/profile?tab=curriculum' : '/dashboard');
+  } catch (err: any) {
+    console.error('Curriculum generation failed:', err);
+    setError(err.message || 'System connection lost. Please try again.');
+    setLoading(false);
+  }
+};
 
-  const handleComplete = async () => {
-    setLoading(true);
-    setError('');
-    try {
-      await saveProgress();
-      const payload = {
-        educationPath,
-        classLevel,
-        board,
-        subjects: selectedSubjects,
-        extractedSyllabus,
-        referenceBooks: selectedBooks.length > 0
-          ? selectedBooks.map(b => ({ title: b.title, author: b.author, id: b.id }))
-          : ['AI_DEFAULT'],
-        interests: selectedInterests,
-        hobbies: selectedHobbies,
-        learningTempo: tempo,
-        currentVibe: vibe,
-      };
-      await fetch('/api/curriculum/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      updateProfile({
-        interests: selectedInterests,
-        hobbies: selectedHobbies,
-        learningTempo: tempo,
-        currentVibe: vibe,
-      });
-      localStorage.setItem('edubridge_theme', vibe);
-      localStorage.setItem('hasCurriculum', 'true');
-      router.push(fromProfile ? '/profile?tab=curriculum' : '/dashboard');
-    } catch (err: any) {
-      console.error('Curriculum generation failed:', err);
-      setError(err.message || 'System connection lost. Please try again.');
-      setLoading(false);
-    }
-  };
-
+const handleComplete = async () => {
+  const hasCurriculum = localStorage.getItem('hasCurriculum') === 'true';
+  if (hasCurriculum) {
+    setShowReplaceWarning(true);
+    return;
+  }
+  await performGeneration();
+};
   // ============================================================================
   // VALIDATION
   // ============================================================================
@@ -1434,7 +1442,51 @@ function OnboardingContent() {
               </motion.div>
             )}
           </AnimatePresence>
-
+          <AnimatePresence>
+  {showReplaceWarning && (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      onClick={() => setShowReplaceWarning(false)}
+    >
+      <motion.div
+        initial={{ scale: 0.9, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.9, opacity: 0 }}
+        className={`${t.card} ${t.border} border rounded-3xl p-8 max-w-md w-full shadow-2xl`}
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="text-center mb-6">
+          <AlertTriangle className="w-16 h-16 text-amber-500 mx-auto mb-4" />
+          <h3 className={`text-2xl font-bold ${t.text} mb-2`}>Replace Existing Curriculum?</h3>
+          <p className={`${t.muted}`}>
+            You already have a curriculum. Generating a new one will replace your current progress. This action cannot be undone.
+          </p>
+        </div>
+        <div className="flex gap-4">
+          <Button
+            variant="outline"
+            className={`flex-1 h-12 rounded-xl ${t.border} ${t.text} hover:${t.accentLight}`}
+            onClick={() => setShowReplaceWarning(false)}
+          >
+            Cancel
+          </Button>
+          <Button
+            className={`flex-1 h-12 rounded-xl bg-gradient-to-r from-red-500 to-rose-600 text-white`}
+            onClick={() => {
+              setShowReplaceWarning(false);
+              performGeneration();
+            }}
+          >
+            Replace Curriculum
+          </Button>
+        </div>
+      </motion.div>
+    </motion.div>
+  )}
+</AnimatePresence>
           {/* Footer Navigation */}
           <div className={`mt-auto pt-6 border-t ${t.border} flex justify-between items-center p-8 ${t.isLight ? 'bg-gradient-to-t from-slate-50/80' : 'bg-gradient-to-t from-slate-900/50'} to-transparent`}>
             <div className="flex gap-2">

@@ -1,8 +1,8 @@
+// app/lesson/chapter/[id]/page.tsx
 'use client';
-
 import { THEME_CONFIG, type ThemeConfig } from '@/lib/themes';
 import { use, useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence, useScroll, useTransform, useSpring, useMotionValue, useMotionTemplate } from 'motion/react';
 import {
   ArrowLeft, Loader2, Sparkles, Brain, CheckCircle2, XCircle, ChevronRight, BookOpen,
@@ -27,9 +27,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { useStore } from '@/store/useStore';
 
 // ============================================================================
-// TYPES
+// TYPES (Sync with Orchestrator Output)
 // ============================================================================
-
 type ContentBlock = {
   id: string;
   type: 'story' | 'fact' | 'image' | 'quiz' | 'video' | 'code' | 'definition' | 'summary';
@@ -58,7 +57,7 @@ type ChapterData = {
   title: string;
   subject: { name: string };
   mixedContent: ContentBlock[];
-  status: 'READY' | 'GENERATING' | 'ERROR';
+  status: 'READY' | 'GENERATING' | 'ERROR' | 'COMPLETED';
   dynamicVibe?: string;
   createdAt: string;
   estimatedDuration: number;
@@ -69,9 +68,37 @@ type Bookmark = { id: string; blockId: string; label?: string; createdAt: string
 type QuizState = { selected: string | string[]; isCorrect: boolean; timestamp: number; timeTaken: number };
 
 // ============================================================================
-// PARTICLE FIELD (Matching Homepage Style)
+// ✅ FIX #1: COLOR UTILS - Convert Tailwind classes to CSS values
 // ============================================================================
+const getColorValue = (colorClass: string | undefined, isLight: boolean): string => {
+  if (!colorClass) return isLight ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.25)';
+  
+  const colorMap: Record<string, string> = {
+    'bg-indigo-300/20': 'rgba(129, 140, 248, 0.2)',
+    'bg-indigo-500/10': 'rgba(99, 102, 241, 0.1)',
+    'bg-indigo-500': '#6366f1',
+    'bg-cyan-400/30': 'rgba(34, 211, 238, 0.3)',
+    'bg-cyan-500': '#06b6d4',
+    'bg-emerald-500/10': 'rgba(16, 185, 129, 0.1)',
+    'bg-emerald-500': '#10b981',
+    'bg-rose-500/10': 'rgba(244, 63, 94, 0.1)',
+    'bg-rose-500': '#f43f5e',
+    'bg-violet-500': '#8b5cf6',
+    'bg-amber-500': '#f59e0b',
+    'bg-slate-900': '#0f172a',
+    'bg-slate-950': '#020617',
+  };
+  
+  if (colorClass.startsWith('bg-')) {
+    return colorMap[colorClass] || (isLight ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.25)');
+  }
+  
+  return colorClass;
+};
 
+// ============================================================================
+// ✅ FIX #2: PARTICLE FIELD - Hydration-safe with style OBJECT
+// ============================================================================
 const ParticleField = ({ theme, count = 20 }: { theme: ThemeConfig; count?: number }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const mousePos = useMotionValue({ x: 0, y: 0 });
@@ -94,11 +121,18 @@ const ParticleField = ({ theme, count = 20 }: { theme: ThemeConfig; count?: numb
 const InteractiveParticle = ({ index, theme, mousePos }: {
   index: number; theme: ThemeConfig; mousePos: ReturnType<typeof useMotionValue<{ x: number; y: number }>>;
 }) => {
-  const x = useMotionValue(Math.random() * 100);
-  const y = useMotionValue(Math.random() * 100);
-  const size = useMotionValue(2 + Math.random() * 4);
-  const opacity = useMotionValue(0.3 + Math.random() * 0.5);
+  // ✅ Hydration-safe: generate random values on client only
+  const [initialX] = useState(() => Math.random() * 100);
+  const [initialY] = useState(() => Math.random() * 100);
+  const [initialSize] = useState(() => 2 + Math.random() * 4);
+  const [initialOpacity] = useState(() => 0.3 + Math.random() * 0.5);
 
+  const x = useMotionValue(initialX);
+  const y = useMotionValue(initialY);
+  const size = useMotionValue(initialSize);
+  const opacity = useMotionValue(initialOpacity);
+
+  // Mouse attraction effect
   useEffect(() => {
     const unsubscribe = mousePos.onChange(({ x: mx, y: my }) => {
       const dx = mx - x.get() * 10;
@@ -115,6 +149,7 @@ const InteractiveParticle = ({ index, theme, mousePos }: {
     return unsubscribe;
   }, [mousePos, x, y]);
 
+  // Gentle drift animation
   useEffect(() => {
     const interval = setInterval(() => {
       const currentX = x.get();
@@ -125,26 +160,31 @@ const InteractiveParticle = ({ index, theme, mousePos }: {
     return () => clearInterval(interval);
   }, [index, x, y]);
 
-  const style = useMotionTemplate`
-    position: absolute;
-    left: ${x}%;
-    top: ${y}%;
-    width: ${size}px;
-    height: ${size}px;
-    opacity: ${opacity};
-    background: ${theme.blob1 || theme.accentLight};
-    border-radius: 50%;
-    filter: blur(1px);
-    transform: translate(-50%, -50%);
-  `;
+  // ✅ Convert theme classes to actual CSS color values
+  const bgColor = getColorValue(theme.blob1 || theme.accentLight, theme.isLight);
 
-  return <motion.div style={style as any} />;
+  // ✅ FIX: Use style OBJECT instead of useMotionTemplate string
+  return (
+    <motion.div
+      style={{
+        position: 'absolute',
+        left: x,
+        top: y,
+        width: size,
+        height: size,
+        opacity: opacity,
+        backgroundColor: bgColor,
+        borderRadius: '50%',
+        filter: 'blur(1px)',
+        transform: 'translate(-50%, -50%)',
+      }}
+    />
+  );
 };
 
 // ============================================================================
-// HOLOGRAPHIC CARD (Theme-aware 3D effect)
+// HOLOGRAPHIC CARD (Theme-aware 3D effect with proper CSS)
 // ============================================================================
-
 const HolographicCard = ({ children, theme, className = '' }: {
   children: React.ReactNode; theme: ThemeConfig; className?: string;
 }) => {
@@ -163,43 +203,71 @@ const HolographicCard = ({ children, theme, className = '' }: {
 
   const handleMouseLeave = () => { mouseX.set(0); mouseY.set(0); };
 
+  const glowColor = getColorValue((theme as any).glowColor, theme.isLight);
+
   return (
     <motion.div
       ref={cardRef} onMouseMove={handleMouseMove} onMouseLeave={handleMouseLeave}
       style={{ rotateX, rotateY, transformPerspective: 1000, transformStyle: 'preserve-3d' }}
       className={`relative ${className}`}
     >
-      {/* Holographic overlay */}
-      <div className="absolute inset-0 rounded-3xl pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300"
+      <div 
+        className="absolute inset-0 rounded-3xl pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300"
         style={{
-          background: `linear-gradient(125deg, transparent 0%, ${(theme as any).glowColor || 'rgba(99,102,241,0.15)'} 30%, transparent 50%, ${(theme as any).glowColor || 'rgba(99,102,241,0.15)'} 70%, transparent 100%)`,
-          backgroundSize: '200% 200%', animation: 'hologram-shine 3s linear infinite',
-        }} /> 
-      {/* Scanlines */}
-      <div className="absolute inset-0 rounded-3xl pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300"
+          background: `linear-gradient(125deg, transparent 0%, ${glowColor} 30%, transparent 50%, ${glowColor} 70%, transparent 100%)`,
+          backgroundSize: '200% 200%',
+          animation: 'hologram-shine 3s linear infinite',
+        }} 
+      />
+      <div 
+        className="absolute inset-0 rounded-3xl pointer-events-none opacity-0 hover:opacity-100 transition-opacity duration-300"
         style={{
           backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 1px, rgba(0,0,0,${theme.isLight ? 0.02 : 0.08}) 1px, rgba(0,0,0,${theme.isLight ? 0.02 : 0.08}) 2px)`,
-        }} />
+        }} 
+      />
       {children}
     </motion.div>
   );
 };
 
 // ============================================================================
-// CONFETTI (Theme-aware celebration)
+// CONFETTI (Hydration-safe celebration)
 // ============================================================================
-
 const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) => {
-  if (!active) return null;
+  const [dimensions, setDimensions] = useState({ width: 1000, height: 800 });
+  const [isMounted, setIsMounted] = useState(false);
+  
+  useEffect(() => {
+    setIsMounted(true);
+    if (typeof window !== 'undefined') {
+      setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    }
+  }, []);
+
+  if (!active || !isMounted) return null;
+  
   return (
     <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-      {[...Array(50)].map((_, i) => (
-        <motion.div key={i}
-          initial={{ y: -20, x: Math.random() * (typeof window !== 'undefined' ? window.innerWidth : 1000), rotate: 0, scale: 0 }}
-          animate={{ y: (typeof window !== 'undefined' ? window.innerHeight : 800) + 100, rotate: Math.random() * 720, scale: Math.random() * 1 + 0.5 }}
-          transition={{ duration: Math.random() * 2 + 2, delay: Math.random() * 0.5, ease: "linear" }}
-          className={`absolute w-3 h-3 rounded-sm ${i % 3 === 0 ? theme.accentBg : i % 3 === 1 ? 'bg-yellow-400' : 'bg-green-400'}`} />
-      ))}
+      {[...Array(50)].map((_, i) => {
+        const randomX = Math.random() * dimensions.width;
+        const randomY = dimensions.height + 100;
+        const randomScale = Math.random() * 1 + 0.5;
+        const randomRotate = Math.random() * 720;
+        const randomDuration = Math.random() * 2 + 2;
+        const randomDelay = Math.random() * 0.5;
+        
+        const colors = [theme.accentBg, 'bg-yellow-400', 'bg-green-400'];
+        
+        return (
+          <motion.div
+            key={i}
+            initial={{ y: -20, x: randomX, rotate: 0, scale: 0 }}
+            animate={{ y: randomY, rotate: randomRotate, scale: randomScale }}
+            transition={{ duration: randomDuration, delay: randomDelay, ease: "linear" }}
+            className={`absolute w-3 h-3 rounded-sm ${colors[i % 3]}`}
+          />
+        );
+      })}
     </div>
   );
 };
@@ -207,7 +275,6 @@ const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) =>
 // ============================================================================
 // FLOATING ACTION BUTTON
 // ============================================================================
-
 const FloatingActionButton = ({ icon: Icon, onClick, label, theme, active = false, badge }: {
   icon: any; onClick: () => void; label: string; theme: ThemeConfig; active?: boolean; badge?: number;
 }) => (
@@ -228,12 +295,13 @@ const FloatingActionButton = ({ icon: Icon, onClick, label, theme, active = fals
 // ============================================================================
 // READING PROGRESS BAR
 // ============================================================================
-
 const ReadingProgress = ({ progress, theme }: { progress: number; theme: ThemeConfig }) => {
   const springProgress = useSpring(progress, { stiffness: 100, damping: 30 });
+  const progressBarColor = theme.progressBar || (theme.isLight ? '#6366f1' : '#818cf8');
+  
   return (
     <div className="fixed top-0 left-0 right-0 h-1.5 z-50 bg-slate-200/20 backdrop-blur-sm">
-      <motion.div style={{ width: springProgress }} className={`h-full ${theme.progressBar || 'bg-indigo-500'} transition-colors shadow-[0_0_10px_rgba(99,102,241,0.5)]`} />
+      <motion.div style={{ width: springProgress, backgroundColor: progressBarColor }} className="h-full transition-colors shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
     </div>
   );
 };
@@ -241,7 +309,6 @@ const ReadingProgress = ({ progress, theme }: { progress: number; theme: ThemeCo
 // ============================================================================
 // STREAK BADGE
 // ============================================================================
-
 const StreakBadge = ({ streak, theme }: { streak: number; theme: ThemeConfig }) => {
   if (streak < 2) return null;
   return (
@@ -256,7 +323,6 @@ const StreakBadge = ({ streak, theme }: { streak: number; theme: ThemeConfig }) 
 // ============================================================================
 // BLOCK TYPE ICON
 // ============================================================================
-
 const BlockTypeIcon = ({ type, theme }: { type: string; theme: ThemeConfig }) => {
   const icons: Record<string, any> = {
     story: BookOpen, fact: Sparkles, image: ImageIcon, quiz: Brain,
@@ -271,23 +337,26 @@ const BlockTypeIcon = ({ type, theme }: { type: string; theme: ThemeConfig }) =>
 };
 
 // ============================================================================
-// IMMERSIVE BUILD MODE (Generation Transition)
+// IMMERSIVE BUILD MODE (Generation Transition - Sync with Orchestrator)
 // ============================================================================
-
 const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
   theme: ThemeConfig; progress: number; statusMessage: string;
 }) => {
+  const glowColor1 = getColorValue(theme.blob1 || theme.accentLight, theme.isLight);
+  const glowColor2 = getColorValue(theme.blob2 || theme.accentLight, theme.isLight);
+  const borderColor = theme.borderAccent || theme.border;
+  
   return (
     <div className={`fixed inset-0 z-50 ${theme.bg} flex flex-col items-center justify-center overflow-hidden`}>
       <ParticleField theme={theme} count={30} />
       
-      {/* Animated gradient orbs */}
       <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.1, 0.25, 0.1] }} transition={{ duration: 8, repeat: Infinity }}
-        className={`absolute top-1/4 left-1/4 w-[600px] h-[600px] ${theme.blob1 || theme.accentLight} rounded-full blur-[150px] mix-blend-screen`} />
+        className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full blur-[150px] mix-blend-screen"
+        style={{ backgroundColor: glowColor1 }} />
       <motion.div animate={{ scale: [1.1, 1, 1.1], opacity: [0.15, 0.1, 0.15] }} transition={{ duration: 10, repeat: Infinity, delay: 2 }}
-        className={`absolute bottom-1/4 right-1/4 w-[500px] h-[500px] ${theme.blob2 || theme.accentLight} rounded-full blur-[120px] mix-blend-screen`} />
+        className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full blur-[120px] mix-blend-screen"
+        style={{ backgroundColor: glowColor2 }} />
       
-      {/* Neural network visualization */}
       <div className="absolute inset-0 flex items-center justify-center opacity-20">
         {[...Array(3)].map((_, i) => (
           <motion.div key={i} animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.25, 0.1] }}
@@ -297,18 +366,16 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
         ))}
       </div>
       
-      {/* Central loading animation */}
       <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.8 }} className="relative z-10 mb-8">
         <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className={`w-24 h-24 rounded-2xl border-2 border-dashed ${theme.borderAccent || theme.border} flex items-center justify-center`}>
+          className={`w-24 h-24 rounded-2xl border-2 border-dashed ${borderColor} flex items-center justify-center`}>
           <Hexagon className={`w-12 h-12 ${theme.accent}`} />
         </motion.div>
-        {/* Pulsing glow */}
-        <motion.div className={`absolute -inset-8 ${theme.blob1 || theme.accentLight} rounded-full blur-3xl opacity-40`}
+        <motion.div className="absolute -inset-8 rounded-full blur-3xl opacity-40"
+          style={{ backgroundColor: glowColor1 }}
           animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.5, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />
       </motion.div>
       
-      {/* Status text */}
       <motion.div className="text-center relative z-10">
         <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}
           className={`text-2xl md:text-3xl font-black ${theme.text} tracking-tight mb-2`}>
@@ -320,7 +387,6 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
         </motion.p>
       </motion.div>
       
-      {/* Progress bar */}
       <div className="relative z-10 w-72 mb-6">
         <div className="h-1 bg-white/10 rounded-full overflow-hidden">
           <motion.div initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 0.5 }}
@@ -335,7 +401,6 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
         </motion.p>
       </div>
       
-      {/* Status indicators */}
       <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }}
         className="absolute bottom-16 flex items-center gap-6 text-white/30 text-[10px] font-mono tracking-wider">
         <div className="flex items-center gap-2">
@@ -354,7 +419,6 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
 // ============================================================================
 // OFFLINE INDICATOR
 // ============================================================================
-
 const OfflineIndicator = ({ isOffline, theme }: { isOffline: boolean; theme: ThemeConfig }) => {
   if (!isOffline) return null;
   return (
@@ -369,19 +433,14 @@ const OfflineIndicator = ({ isOffline, theme }: { isOffline: boolean; theme: The
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
-
 export default function ChapterReaderPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const { updateProfile, user } = useStore();
 
-  // Refs
-  const contentRef = useRef<HTMLDivElement>(null);
   const blockRefs = useRef<Record<string, HTMLDivElement>>({});
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
-  const saveProgressTimer = useRef<NodeJS.Timeout | null>(null);
 
-  // State
   const [chapter, setChapter] = useState<ChapterData | null>(null);
   const [profileData, setProfileData] = useState<any>(null);
   const [activeTheme, setActiveTheme] = useState<ThemeConfig>(THEME_CONFIG['minimalist']);
@@ -393,7 +452,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   const [isOffline, setIsOffline] = useState(false);
   const [usingCache, setUsingCache] = useState(false);
 
-  // Engagement State
   const [quizState, setQuizState] = useState<Record<string, QuizState>>({});
   const [totalPoints, setTotalPoints] = useState(0);
   const [correctAnswers, setCorrectAnswers] = useState(0);
@@ -403,7 +461,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   const [completedBlocks, setCompletedBlocks] = useState<Set<string>>(new Set());
   const [sessionStartTime, setSessionStartTime] = useState(Date.now());
 
-  // Interaction State
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [speakingBlockId, setSpeakingBlockId] = useState<string | null>(null);
   const [notes, setNotes] = useState<UserNote[]>([]);
@@ -418,13 +475,14 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   const [showHint, setShowHint] = useState<Record<string, boolean>>({});
   const [showBlockActions, setShowBlockActions] = useState<string | null>(null);
 
-  // Scroll & Progress
-  const { scrollYProgress } = useScroll({ target: contentRef });
+  // ✅ FIX #3: Hydration-safe useScroll
+  // ✅ FIX #3: Use default window scroll to bypass unhydrated ref errors
+  const { scrollYProgress } = useScroll();
   const scrollProgress = useTransform(scrollYProgress, [0, 1], [0, 100]);
   const [progressValue, setProgressValue] = useState(0);
 
-  // Track scroll progress value
   useEffect(() => {
+    if (typeof window === 'undefined') return;
     const unsubscribe = scrollProgress.on('change', (latest) => setProgressValue(latest));
     return () => unsubscribe();
   }, [scrollProgress]);
@@ -432,14 +490,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   // ============================================================================
   // OFFLINE DETECTION & CACHE MANAGEMENT
   // ============================================================================
-
-  // Check online status
   useEffect(() => {
     const updateOnlineStatus = () => {
       const offline = !navigator.onLine;
       setIsOffline(offline);
       if (!offline && usingCache) {
-        // Try to refresh from network when back online
         fetchChapterData(true);
       }
     };
@@ -452,13 +507,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     };
   }, [usingCache]);
 
-  // Cache key for localStorage
   const getCacheKey = useCallback((chapterId: string) => `edubridge:chapter:${chapterId}`, []);
   const getProgressKey = useCallback((chapterId: string) => `edubridge:progress:${chapterId}`, []);
   const getNotesKey = useCallback((chapterId: string) => `edubridge:notes:${chapterId}`, []);
   const getBookmarksKey = useCallback((chapterId: string) => `edubridge:bookmarks:${chapterId}`, []);
 
-  // Save to localStorage (Capacitor-compatible)
   const saveToCache = useCallback((key: string, data: any) => {
     try {
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
@@ -469,7 +522,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     }
   }, []);
 
-  // Load from localStorage with TTL check (24 hours)
   const loadFromCache = useCallback((key: string) => {
     try {
       if (typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
@@ -489,13 +541,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   }, []);
 
   // ============================================================================
-  // SMART POLLING ENGINE FOR GENERATING STATUS
+  // SMART POLLING ENGINE
   // ============================================================================
-
   const startPolling = useCallback(async () => {
     let pollCount = 0;
-    const maxPolls = 60; // 3 minutes max (60 * 3s)
-
+    const maxPolls = 60;
+    
     const poll = async () => {
       if (pollCount >= maxPolls) {
         setError('Generation timed out. Please try again.');
@@ -503,19 +554,15 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         return;
       }
       pollCount++;
-
+      
       try {
         const res = await fetch(`/api/chapter/${id}/status`);
         const data = await res.json();
-
+        
         if (data.status === 'READY' && data.chapter) {
-          // Generation complete! Show transition animation
           setGenerationProgress(100);
           setGenerationMessage('Finalizing experience...');
-          
-          // Beautiful dissolve transition
           await new Promise(resolve => setTimeout(resolve, 800));
-          
           setChapter(data.chapter);
           setProfileData(data.profile);
           if (data.chapter.dynamicVibe && THEME_CONFIG[data.chapter.dynamicVibe]) {
@@ -526,12 +573,10 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           saveToCache(getCacheKey(id), { chapter: data.chapter, profile: data.profile });
           return;
         }
-
+        
         if (data.status === 'GENERATING') {
-          // Update progress based on polling count (simulated)
           const progress = Math.min(95, pollCount * 1.5);
           setGenerationProgress(progress);
-          
           const messages = [
             'Analyzing curriculum structure...',
             'Weaving narrative framework...',
@@ -542,25 +587,22 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           ];
           setGenerationMessage(messages[Math.min(Math.floor(pollCount / 10), messages.length - 1)]);
         }
-
+        
         if (data.status === 'ERROR') {
           setError(data.error || 'Generation failed');
           setLoading(false);
           return;
         }
-
-        // Continue polling
+        
         pollingRef.current = setTimeout(poll, 3000);
       } catch (err) {
         console.error('Polling error:', err);
         pollingRef.current = setTimeout(poll, 3000);
       }
     };
-
     poll();
   }, [id, getCacheKey, saveToCache]);
 
-  // Stop polling on unmount
   useEffect(() => {
     return () => {
       if (pollingRef.current) clearTimeout(pollingRef.current);
@@ -568,13 +610,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   }, []);
 
   // ============================================================================
-  // FETCH CHAPTER DATA (With Offline Fallback)
+  // FETCH CHAPTER DATA
   // ============================================================================
-
   const fetchChapterData = useCallback(async (forceNetwork = false) => {
     if (!id) return;
-
-    // Try cache first if offline or not forcing network
+    
     if (!forceNetwork && !navigator.onLine) {
       const cached = loadFromCache(getCacheKey(id));
       if (cached?.chapter) {
@@ -588,14 +628,13 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         return;
       }
     }
-
+    
     try {
       const res = await fetch(`/api/chapter/${id}`);
       const data = await res.json();
-
+      
       if (!res.ok) throw new Error(data.error);
-
-      // Handle GENERATING status with smart polling
+      
       if (data.chapter?.status === 'GENERATING') {
         setIsGenerating(true);
         setGenerationProgress(10);
@@ -603,26 +642,22 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         startPolling();
         return;
       }
-
-      // READY status - load normally
-      setChapter(data.chapter);
-      setProfileData(data.profile || data.chapter?.userProgress);
       
-      // Load theme from profile or default
+      setChapter(data.chapter);
+      setProfileData(data.profile);
+      
       const dynamicVibe = data.profile?.currentVibe || data.chapter?.dynamicVibe || 'minimalist';
       if (THEME_CONFIG[dynamicVibe]) {
         setActiveTheme(THEME_CONFIG[dynamicVibe]);
       }
-
-      // Cache the successful response
+      
       saveToCache(getCacheKey(id), { chapter: data.chapter, profile: data.profile });
       setUsingCache(false);
-
-      // Load saved progress from localStorage
+      
       const savedNotes = loadFromCache(getNotesKey(id));
       const savedBookmarks = loadFromCache(getBookmarksKey(id));
       const savedProgress = loadFromCache(getProgressKey(id));
-
+      
       if (savedNotes) setNotes(savedNotes);
       if (savedBookmarks) setBookmarks(savedBookmarks);
       if (savedProgress) {
@@ -632,9 +667,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         setCorrectAnswers(savedProgress.correctAnswers || 0);
         setReadingTime(savedProgress.readingTime || 0);
       }
-
     } catch (err: any) {
-      // Fallback to cache on network error
       const cached = loadFromCache(getCacheKey(id));
       if (cached?.chapter) {
         setChapter(cached.chapter);
@@ -643,7 +676,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           setActiveTheme(THEME_CONFIG[cached.chapter.dynamicVibe]);
         }
         setUsingCache(true);
-        setError(''); // Clear error since we have cached content
+        setError('');
       } else {
         setError(err.message || 'Failed to load chapter');
       }
@@ -656,18 +689,10 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     if (id) fetchChapterData();
   }, [id, fetchChapterData]);
 
-  // ============================================================================
-  // READING TIME TRACKER
-  // ============================================================================
-
   useEffect(() => {
     const timer = setInterval(() => setReadingTime(prev => prev + 1), 1000);
     return () => clearInterval(timer);
   }, []);
-
-  // ============================================================================
-  // AUTO-SAVE PROGRESS (Decoupled with refs)
-  // ============================================================================
 
   const progressDataRef = useRef({
     completedBlocks: Array.from(completedBlocks),
@@ -687,13 +712,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
       totalPoints,
       correctAnswers
     };
-    // Save to localStorage immediately
     if (chapter && typeof localStorage !== 'undefined') {
       saveToCache(getProgressKey(id), progressDataRef.current);
     }
   }, [completedBlocks, currentBlockIndex, readingTime, quizState, totalPoints, correctAnswers, chapter, id, getProgressKey, saveToCache]);
 
-  // Backend sync every 30 seconds
   useEffect(() => {
     const syncInterval = setInterval(() => {
       const currentData = progressDataRef.current;
@@ -712,28 +735,23 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     return () => clearInterval(syncInterval);
   }, [id]);
 
-  // Save on page unload
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (isOffline) return;
       const currentData = progressDataRef.current;
       if (navigator.sendBeacon) {
-        // Must wrap in a Blob with application/json type, otherwise Next.js throws a 500
-        const blob = new Blob([JSON.stringify({ 
-          readingTime: currentData.readingTime, 
-          completedBlocks: currentData.completedBlocks, 
-          currentBlockIndex: currentData.currentBlockIndex 
+        const blob = new Blob([JSON.stringify({
+          readingTime: currentData.readingTime,
+          completedBlocks: currentData.completedBlocks,
+          currentBlockIndex: currentData.currentBlockIndex
         })], { type: 'application/json' });
-        
         navigator.sendBeacon(`/api/chapter/${id}/progress`, blob);
       }
     };
-
     window.addEventListener('beforeunload', handleBeforeUnload);
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, [id]);
 
-  // Auto-save notes & bookmarks
   useEffect(() => {
     if (notes.length > 0) saveToCache(getNotesKey(id), notes);
   }, [notes, id, getNotesKey, saveToCache]);
@@ -741,10 +759,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   useEffect(() => {
     if (bookmarks.length > 0) saveToCache(getBookmarksKey(id), bookmarks);
   }, [bookmarks, id, getBookmarksKey, saveToCache]);
-
-  // ============================================================================
-  // SCROLL TRACKING (Performance Optimized)
-  // ============================================================================
 
   useEffect(() => {
     let timeoutId: NodeJS.Timeout | null = null;
@@ -771,10 +785,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     };
   }, [chapter]);
 
-  // ============================================================================
-  // TEXT TO SPEECH
-  // ============================================================================
-
   const toggleSpeech = useCallback((blockId: string, content: string) => {
     if (typeof window === 'undefined') return;
     if (isSpeaking && speakingBlockId === blockId) {
@@ -800,17 +810,13 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     return () => { if (typeof window !== 'undefined') window.speechSynthesis.cancel(); };
   }, []);
 
-  // ============================================================================
-  // QUIZ HANDLING
-  // ============================================================================
-
   const handleQuizAnswer = useCallback((quizId: string, selectedOption: string | string[], correctAnswer: string | string[], points: number) => {
     if (quizState[quizId]) return;
     const timeTaken = Math.floor((Date.now() - sessionStartTime) / 1000);
     const isCorrect = Array.isArray(correctAnswer)
       ? Array.isArray(selectedOption) && [...selectedOption].sort().join(',') === [...correctAnswer].sort().join(',')
       : selectedOption === correctAnswer;
-
+    
     setQuizState(prev => ({ ...prev, [quizId]: { selected: selectedOption, isCorrect, timestamp: Date.now(), timeTaken } }));
     
     if (isCorrect) {
@@ -819,14 +825,10 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
       setShowConfetti(true);
       setTimeout(() => setShowConfetti(false), 3000);
     }
-
+    
     const block = chapter?.mixedContent?.find((b: ContentBlock) => b.quizData?.id === quizId);
     if (block) setCompletedBlocks(prev => new Set([...prev, block.id]));
   }, [quizState, chapter, sessionStartTime]);
-
-  // ============================================================================
-  // NOTE & BOOKMARK HANDLING
-  // ============================================================================
 
   const saveNote = useCallback((blockId: string) => {
     if (!noteContent.trim()) return;
@@ -857,10 +859,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
       return newSet;
     });
   }, []);
-
-  // ============================================================================
-  // NAVIGATION & UTILS
-  // ============================================================================
 
   const scrollToBlock = useCallback((blockId: string) => {
     const element = blockRefs.current[blockId];
@@ -916,7 +914,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   // ============================================================================
   // LOADING & ERROR STATES
   // ============================================================================
-
   if (isGenerating) {
     return <ImmersiveBuildMode theme={activeTheme} progress={generationProgress} statusMessage={generationMessage} />;
   }
@@ -967,31 +964,29 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   // ============================================================================
   // MAIN RENDER
   // ============================================================================
-
   return (
     <div className={`min-h-screen ${t.bg} ${t.text} font-sans pb-32 relative overflow-x-hidden transition-colors duration-1000 ease-in-out`}>
       <Confetti active={showConfetti} theme={t} />
       <ReadingProgress progress={progressValue} theme={t} />
       <OfflineIndicator isOffline={isOffline} theme={t} />
-
-      {/* Dynamic Background */}
+      
       <div className={`absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] ${t.gradient} pointer-events-none transition-colors duration-1000 opacity-5`} />
       
-      {/* Animated Blobs */}
       {!t.isLight && (
         <>
           <motion.div animate={{ x: [0, 100, 0], y: [0, 50, 0] }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-            className={`absolute top-20 left-10 w-96 h-96 rounded-full blur-3xl ${t.blob1 || t.accentLight} pointer-events-none opacity-30`} />
+            className="absolute top-20 left-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-30"
+            style={{ backgroundColor: getColorValue(t.blob1 || t.accentLight, t.isLight) }} />
           <motion.div animate={{ x: [0, -100, 0], y: [0, -50, 0] }} transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-            className={`absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl ${t.blob2 || t.accentLight} pointer-events-none opacity-30`} />
+            className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-30"
+            style={{ backgroundColor: getColorValue(t.blob2 || t.accentLight, t.isLight) }} />
         </>
       )}
       
       {!t.isLight && (
         <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: `linear-gradient(currentColor 1px, transparent 1px), linear-gradient(90deg, currentColor 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
       )}
-
-      {/* Enhanced Header */}
+      
       <header className={`sticky top-0 z-40 ${t.card}/90 backdrop-blur-xl border-b ${t.border} shadow-sm transition-colors duration-1000`}>
         <div className="max-w-6xl mx-auto px-4 md:px-6">
           <div className="h-16 flex items-center justify-between">
@@ -1062,9 +1057,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         </div>
       </header>
 
-      {/* Main Content */}
-      <main ref={contentRef} className="max-w-4xl mx-auto px-4 md:px-8 pt-8 md:pt-12 space-y-12 relative z-10">
-        {/* Chapter Title Block */}
+      <main className="max-w-4xl mx-auto px-4 md:px-8 pt-8 md:pt-12 space-y-12 relative z-10">
         <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className={`text-center pb-10 border-b ${t.border}`}>
           <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200, delay: 0.2 }}
             className={`w-24 h-24 ${t.accentLight} ${t.accent} rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border ${t.border}`}>
@@ -1099,7 +1092,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           </div>
         </motion.div>
 
-        {/* Empty State */}
         {blocks.length === 0 && (
           <div className={`text-center ${t.muted} py-10 flex flex-col items-center`}>
             <Loader2 className={`w-12 h-12 mb-4 animate-spin ${t.accent}`} />
@@ -1108,7 +1100,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           </div>
         )}
 
-        {/* Content Blocks */}
         {blocks.map((block, idx) => {
           const isCompleted = completedBlocks.has(block.id);
           const hasNote = notes.some(n => n.blockId === block.id);
@@ -1117,7 +1108,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           const isCurrentBlock = currentBlockIndex === idx;
           const blockNumber = idx + 1;
 
-          // STORY BLOCK
           if (block.type === 'story' && block.content) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
@@ -1131,7 +1121,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                   <FloatingActionButton icon={PenLine} onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }} label="Add Note" theme={t} badge={notes.filter(n => n.blockId === block.id).length} />
                   <FloatingActionButton icon={Heart} onClick={() => toggleLike(block.id)} label="Like" theme={t} active={isLiked} />
                 </div>
-
+                
                 <div className="flex items-center gap-3 mb-4">
                   <BlockTypeIcon type="story" theme={t} />
                   <div>
@@ -1140,7 +1130,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                   </div>
                   {isCompleted && <Badge className="ml-auto bg-emerald-500/10 text-emerald-600 border-emerald-500/30"><CheckCircle2 className="w-3 h-3 mr-1" /> Done</Badge>}
                 </div>
-
+                
                 <HolographicCard theme={t}>
                   <div className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-10 shadow-sm transition-all`} style={{ fontSize: `${fontSize}px` }}>
                     <p className={`text-[1.1rem] md:text-[1.2rem] leading-[1.9] font-medium ${t.isLight ? 'text-slate-700' : 'text-slate-300'}`}>{block.content}</p>
@@ -1158,7 +1148,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                     </div>
                   </div>
                 </HolographicCard>
-
+                
                 <AnimatePresence>
                   {activeNoteBlock === block.id && (
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-4 overflow-hidden">
@@ -1178,7 +1168,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // FACT BLOCK
           if (block.type === 'fact' && block.content) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
@@ -1190,7 +1179,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                   <FloatingActionButton icon={Bookmark} onClick={() => toggleBookmark(block.id)} label="Bookmark" theme={t} />
                   <FloatingActionButton icon={PenLine} onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }} label="Add Note" theme={t} />
                 </div>
-
+                
                 <div className={`absolute -left-4 top-0 bottom-0 w-1 ${t.accentBg} rounded-full`} />
                 <div className={`${t.accentLight} border-l-4 ${t.borderAccent || t.border} p-6 md:p-8 rounded-r-3xl shadow-sm relative overflow-hidden group/card`}>
                   <div className={`absolute top-0 right-0 p-4 opacity-10 group-hover/card:opacity-20 transition-opacity ${t.accent}`}>
@@ -1216,12 +1205,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // IMAGE BLOCK
           if (block.type === 'image' && (block.content || block.imageData?.url)) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
                 initial={{ opacity: 0, scale: 1.05 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: false, margin: "-100px" }}
                 transition={{ duration: 0.8, ease: "easeOut" }} className="relative group">
+                
                 <div className={`rounded-[2rem] overflow-hidden border ${t.border} relative group/card`}>
                   <img src={block.content || block.imageData?.url} alt={block.title || 'AI Generated Concept'} className="w-full h-auto object-cover" loading="lazy" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 flex items-end p-6">
@@ -1245,13 +1234,14 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // QUIZ BLOCK
           if (block.type === 'quiz' && block.quizData) {
             const q = block.quizData;
             const state = quizState[q.id];
+            
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
                 initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }} className="relative">
+                
                 <HolographicCard theme={t}>
                   <div className={`${t.card} border ${t.border} shadow-2xl rounded-[2.5rem] overflow-hidden backdrop-blur-xl`}>
                     <div className={`p-6 md:p-8 border-b ${t.border} bg-black/5 flex items-start justify-between gap-4`}>
@@ -1276,16 +1266,19 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         </motion.div>
                       )}
                     </div>
+                    
                     <div className="p-6 md:p-8 space-y-3">
                       {q.options.map((opt, i) => {
                         const isSelected = Array.isArray(state?.selected) ? state.selected.includes(opt) : state?.selected === opt;
                         const isCorrectAnswer = Array.isArray(q.correctAnswer) ? q.correctAnswer.includes(opt) : opt === q.correctAnswer;
+                        
                         let buttonClass = `${t.bg} border ${t.border.split('-')[1]} ${t.text} hover:${t.borderAccent || t.border} hover:${t.accentLight}`;
                         if (state) {
                           if (isCorrectAnswer) buttonClass = "bg-emerald-500/10 border-emerald-500 text-emerald-600 dark:text-emerald-400";
                           else if (isSelected && !isCorrectAnswer) buttonClass = "bg-rose-500/10 border-rose-500 text-rose-600 dark:text-rose-400";
                           else buttonClass = `${t.bg} border-transparent opacity-40`;
                         }
+                        
                         return (
                           <motion.button key={i} disabled={!!state} onClick={() => handleQuizAnswer(q.id, opt, q.correctAnswer, q.points)}
                             whileHover={!state ? { scale: 1.02 } : {}} whileTap={!state ? { scale: 0.98 } : {}}
@@ -1296,11 +1289,13 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                           </motion.button>
                         );
                       })}
+                      
                       {!state && q.hint && (
                         <Button variant="ghost" size="sm" onClick={() => setShowHint(prev => ({ ...prev, [q.id]: !prev[q.id] }))} className={`${t.muted} hover:${t.accent}`}>
                           <Lightbulb className="w-4 h-4 mr-2" /> Need a hint?
                         </Button>
                       )}
+                      
                       <AnimatePresence>
                         {showHint[q.id] && q.hint && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className={`p-4 rounded-xl ${t.accentLight} border ${t.borderAccent || t.border}`}>
@@ -1308,6 +1303,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                           </motion.div>
                         )}
                       </AnimatePresence>
+                      
                       <AnimatePresence>
                         {state && (
                           <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="pt-6 overflow-hidden">
@@ -1332,11 +1328,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // CODE BLOCK
           if (block.type === 'code' && block.codeData) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
                 initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }}>
+                
                 <HolographicCard theme={t}>
                   <div className={`${t.card} border ${t.border} rounded-3xl overflow-hidden shadow-lg`}>
                     <div className={`flex items-center justify-between px-4 py-3 border-b ${t.border} ${t.bg}`}>
@@ -1365,11 +1361,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // DEFINITION BLOCK
           if (block.type === 'definition' && block.definitionData) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
                 initial={{ opacity: 0, scale: 0.95 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.5 }}>
+                
                 <HolographicCard theme={t}>
                   <div className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-8 shadow-sm`}>
                     <div className="flex items-start gap-4">
@@ -1393,11 +1389,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             );
           }
 
-          // SUMMARY BLOCK
           if (block.type === 'summary' && block.content) {
             return (
               <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
                 initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }}>
+                
                 <div className={`${t.accentLight} border ${t.borderAccent || t.border} rounded-3xl p-6 md:p-8 shadow-sm`}>
                   <div className="flex items-center gap-3 mb-4">
                     <ListChecks className={`w-6 h-6 ${t.accent}`} />
@@ -1419,7 +1415,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           return null;
         })}
 
-        {/* Navigation Controls */}
         {blocks.length > 0 && (
           <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }}
             className={`sticky bottom-24 z-30 flex items-center justify-center gap-4 py-4`}>
@@ -1434,10 +1429,10 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
           </motion.div>
         )}
 
-        {/* Complete Chapter Button */}
         {blocks.length > 0 && (
           <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ delay: 0.3 }}
             className={`pt-16 pb-12 flex flex-col items-center border-t ${t.border} mt-10`}>
+            
             <div className="text-center mb-8">
               <p className={`${t.muted} font-bold tracking-widest uppercase text-xs mb-2`}>Module Assimilation Complete</p>
               <div className="flex items-center justify-center gap-6 flex-wrap">
@@ -1455,6 +1450,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                 </div>
               </div>
             </div>
+            
             <Button onClick={completeChapter} className={`h-16 px-12 ${t.accentBg} text-white font-bold text-lg rounded-full transition-all transform hover:scale-105 hover:-translate-y-1 border border-white/20 shadow-xl`}>
               Begin Mastery Assessment <ChevronRight className="w-6 h-6 ml-2" />
             </Button>
@@ -1463,14 +1459,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         )}
       </main>
 
-      {/* Floating Action Bar (Mobile) */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-full bg-white/90 backdrop-blur-xl border border-slate-200 shadow-2xl md:hidden">
         <FloatingActionButton icon={Bookmark} onClick={() => setShowBookmarksDialog(true)} label="Bookmarks" theme={t} badge={bookmarks.length} />
         <FloatingActionButton icon={PenLine} onClick={() => setShowNotesDialog(true)} label="Notes" theme={t} badge={notes.length} />
         <FloatingActionButton icon={Volume2} onClick={() => setIsSpeaking(!isSpeaking)} label="Read Aloud" theme={t} active={isSpeaking} />
       </div>
 
-      {/* Notes Dialog */}
       <Dialog open={showNotesDialog} onOpenChange={setShowNotesDialog}>
         <DialogContent className={`${t.card} border ${t.border} max-w-2xl`}>
           <DialogHeader>
@@ -1495,7 +1489,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         </DialogContent>
       </Dialog>
 
-      {/* Bookmarks Dialog */}
       <Dialog open={showBookmarksDialog} onOpenChange={setShowBookmarksDialog}>
         <DialogContent className={`${t.card} border ${t.border} max-w-2xl`}>
           <DialogHeader>
@@ -1529,14 +1522,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         </DialogContent>
       </Dialog>
 
-      {/* Font Size Control */}
       <div className={`fixed bottom-6 right-6 z-40 hidden md:flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border} shadow-lg`}>
         <Button variant="ghost" size="sm" onClick={() => setFontSize(Math.max(14, fontSize - 2))} className={`w-8 h-8 p-0 ${t.muted}`}><Minimize2 className="w-4 h-4" /></Button>
         <span className={`text-xs ${t.muted} w-12 text-center`}>{fontSize}px</span>
         <Button variant="ghost" size="sm" onClick={() => setFontSize(Math.min(24, fontSize + 2))} className={`w-8 h-8 p-0 ${t.muted}`}><Maximize2 className="w-4 h-4" /></Button>
       </div>
 
-      {/* Global animation styles */}
       <style jsx global>{`
         @keyframes hologram-shine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
       `}</style>

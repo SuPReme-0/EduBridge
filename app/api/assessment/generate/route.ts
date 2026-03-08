@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server';
 import { generateObject } from 'ai';
-import { google } from '@ai-sdk/google';
+import { createGroq } from '@ai-sdk/groq';
 import { z } from 'zod';
 import { prisma } from '@/lib/db/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { rateLimiters, checkRateLimit, getClientIdentifier } from '@/lib/rate-limit';
 
+const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
+
+// ... (all schema definitions remain unchanged) ...
 const BaseQuestionSchema = z.object({
   id: z.string(),
   type: z.enum(['single_mcq', 'multiple_mcq', 'true_false', 'short_answer', 'long_answer', 'image_mcq']),
@@ -72,7 +75,6 @@ export async function POST(req: Request) {
   try {
     const clientIp = getClientIdentifier(req);
     const rateLimit = await checkRateLimit(rateLimiters.assessment, clientIp);
-
     if (!rateLimit.success) {
       return NextResponse.json(
         { error: 'Too many assessment generations. Please wait before trying again.' },
@@ -81,10 +83,7 @@ export async function POST(req: Request) {
     }
 
     const supabase = await createServerSupabaseClient();
-    const authResult = await supabase.auth.getUser();
-    const user = authResult.data?.user;
-    const authError = authResult.error;
-
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
@@ -123,7 +122,6 @@ export async function POST(req: Request) {
         return NextResponse.json({ error: 'Access denied.' }, { status: 403 });
       }
 
-      // Extract content from mixedContent (from lesson generation)
       if (chapterData.mixedContent) {
         const content = chapterData.mixedContent as any[];
         rawText = content
@@ -135,13 +133,19 @@ export async function POST(req: Request) {
       const classLevel = chapterData.subject.curriculum.user.profile?.classLevel || 10;
       const learningTempo = chapterData.subject.curriculum.user.profile?.learningTempo || 'NORMAL';
 
-      // Adjust question count based on learning tempo
       const adjustedCount = learningTempo === 'EASY' ? Math.max(3, questionCount - 2)
         : learningTempo === 'EXTREME' ? Math.min(10, questionCount + 3)
         : questionCount;
 
+      // 🚀 Updated Groq model and added providerOptions for JSON mode
       const { object: quizData } = await generateObject({
-        model: google('gemini-2.5-flash'),
+        model: groq('llama-3.3-70b-versatile'), // ✅ current model
+        providerOptions: {
+          groq: {
+            structuredOutputs: false,
+            response_format: { type: 'json_object' },
+          },
+        },
         system: `You are an expert assessment creator for ${subject}.
                  Generate exactly ${adjustedCount} engaging quiz questions based on the chapter content.
 
@@ -163,14 +167,13 @@ export async function POST(req: Request) {
 
                  Difficulty should match Grade ${classLevel} level.
                  Questions should test understanding, not just memorization.`,
-        prompt: `Generate a quiz based on this chapter titled "${chapterTitle || chapterData?.title}":\n\n${rawText.substring(0, 12000)}`,
+        prompt: `Generate a quiz based on this chapter titled "${chapterTitle || chapterData?.title}":\n\n${rawText.substring(0, 30000)}`,
         schema: z.object({
           questions: z.array(QuizQuestionSchema),
         }),
-        temperature: 0.7
+        temperature: 0.5,
       });
 
-      // Save assessment to Homework table
       await prisma.homework.upsert({
         where: { chapterId: chapterData.id },
         update: {
@@ -196,16 +199,22 @@ export async function POST(req: Request) {
     } else {
       // Fallback without chapterId
       const { object: quizData } = await generateObject({
-        model: google('gemini-2.5-flash'),
+        model: groq('llama-3.3-70b-versatile'),
+        providerOptions: {
+          groq: {
+            structuredOutputs: false,
+            response_format: { type: 'json_object' },
+          },
+        },
         system: `You are an expert assessment creator for ${subject}.
                  Generate exactly ${questionCount} engaging quiz questions.
                  Include variety: MCQ, True/False, Short Answer, Long Answer.
                  Every question MUST include hint, explanation, time limit, and points.`,
-        prompt: `Generate a quiz based on this content titled "${chapterTitle}":\n\n${JSON.stringify(chapterContent).substring(0, 12000)}`,
+        prompt: `Generate a quiz based on this content titled "${chapterTitle}":\n\n${JSON.stringify(chapterContent).substring(0, 30000)}`,
         schema: z.object({
           questions: z.array(QuizQuestionSchema),
         }),
-        temperature: 0.7
+        temperature: 0.5,
       });
 
       const duration = Date.now() - startTime;
@@ -221,6 +230,13 @@ export async function POST(req: Request) {
   } catch (error: any) {
     const duration = Date.now() - startTime;
     console.error(`[Assessment Generate] Error in ${duration}ms | Request: ${requestId}`, error);
+
+    if (error.name === 'TypeValidationError' || error.name === 'ZodError') {
+      return NextResponse.json(
+        { error: 'AI failed to generate a valid quiz. Please try again.' },
+        { status: 400 }
+      );
+    }
 
     return NextResponse.json(
       { error: 'Failed to generate assessment matrix.', details: error.message },

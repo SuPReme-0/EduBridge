@@ -232,11 +232,22 @@ model Chapter {
   difficultyLevel  Int      @default(5)
   tags             String[]
 
+  // ✅ ADDED: Fields for orchestrator output and sync
+  dynamicVibe      String?   // Theme key from orchestrator
+  estimatedDuration Int?      // Total estimated minutes (could be same as estimatedMinutes or sum of blocks)
+  errorMessage     String?    // Error message if generation fails
+
   // ✅ ADDED: Order field for proper chapter sequencing
   order Int @default(0)
 
   progress          Progress[] @relation("ChapterProgress")
   recommendedNextIn Progress[] @relation("NextRecommendedChapter")
+
+  
+  
+  generationProgress Int          @default(0)  // 0-100 progress bar
+  completedAt        DateTime?                  // When generation finished
+  
 
   homework      Homework?
   doubtSessions DoubtSession[]
@@ -267,6 +278,11 @@ model Progress {
   timeSpentSeconds Int       @default(0)
   startedAt        DateTime  @default(now())
   completedAt      DateTime?
+
+  // ✅ ADDED: Fields for detailed progress tracking
+  currentBlockIndex Int?       // Current block the user is on
+  completedBlockIds Json?      // Array of block IDs that are completed
+  quizResults      Json?       // Results of quizzes
 
   nextRecommendedId String?
   nextRecommended   Chapter? @relation("NextRecommendedChapter", fields: [nextRecommendedId], references: [id], onDelete: SetNull)

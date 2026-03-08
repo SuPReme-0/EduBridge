@@ -3,8 +3,10 @@ import { prisma } from '@/lib/db/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { rateLimiters, checkRateLimit, getClientIdentifier } from '@/lib/rate-limit';
 import { generateObject } from 'ai';
-import { google } from '@ai-sdk/google';
+import { createGroq } from '@ai-sdk/groq';
 import { z } from 'zod';
+
+const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 
 const GradingSchema = z.object({
   score: z.number().min(0).max(100),
@@ -19,7 +21,6 @@ export async function POST(req: Request) {
   try {
     const clientIp = getClientIdentifier(req);
     const rateLimit = await checkRateLimit(rateLimiters.assessment, clientIp);
-
     if (!rateLimit.success) {
       return NextResponse.json(
         { error: 'Too many submissions. Please wait before trying again.' },
@@ -28,21 +29,16 @@ export async function POST(req: Request) {
     }
 
     const supabase = await createServerSupabaseClient();
-    const authResult = await supabase.auth.getUser();
-    const user = authResult.data?.user;
-    const authError = authResult.error;
-
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     const { chapterId, answers, timeSpentSeconds } = await req.json();
-
     if (!chapterId || !answers || !Array.isArray(answers)) {
       return NextResponse.json({ error: 'Invalid submission data.' }, { status: 400 });
     }
 
-    // Fetch chapter and homework
     const chapter = await prisma.chapter.findUnique({
       where: { id: chapterId },
       include: {
@@ -64,7 +60,6 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'No assessment available for this chapter.' }, { status: 400 });
     }
 
-    // Grade each answer
     let totalScore = 0;
     let maxScore = 0;
     const gradedAnswers: any[] = [];
@@ -76,7 +71,6 @@ export async function POST(req: Request) {
       maxScore += question.points || 10;
       let questionScore = 0;
 
-      // Auto-grade objective questions (MCQ, True/False)
       if (['single_mcq', 'multiple_mcq', 'true_false', 'image_mcq'].includes(question.type)) {
         const isCorrect = Array.isArray(question.correctAnswer)
           ? JSON.stringify(answer.value.sort()) === JSON.stringify(question.correctAnswer.sort())
@@ -96,11 +90,16 @@ export async function POST(req: Request) {
         });
       }
 
-      // AI-grade subjective questions (Short/Long Answer)
       if (['short_answer', 'long_answer'].includes(question.type)) {
         try {
           const { object: grading } = await generateObject({
-            model: google('gemini-2.5-flash'),
+            model: groq('llama-3.1-8b-instant'), // fast 8B model for grading
+            providerOptions: {
+              groq: {
+                structuredOutputs: false,
+                response_format: { type: 'json_object' },
+              },
+            },
             system: `You are an expert grader. Grade this ${question.type === 'short_answer' ? 'short' : 'long'} answer fairly.
             Question: ${question.prompt}
             Correct Answer Reference: ${question.correctAnswer}
@@ -137,7 +136,6 @@ export async function POST(req: Request) {
 
     const percentage = maxScore > 0 ? Math.round((totalScore / maxScore) * 100) : 0;
 
-    // Update progress
     await prisma.progress.upsert({
       where: {
         userId_chapterId: {
@@ -163,7 +161,6 @@ export async function POST(req: Request) {
       }
     });
 
-    // Update chapter status
     if (percentage >= 70) {
       await prisma.chapter.update({
         where: { id: chapterId },
@@ -171,7 +168,6 @@ export async function POST(req: Request) {
       });
     }
 
-    // Update profile stats (FIXED: Removed chaptersCompleted)
     await prisma.profile.update({
       where: { userId: user.id },
       data: {
@@ -182,7 +178,6 @@ export async function POST(req: Request) {
       }
     });
 
-    // Calculate new average mastery
     const profile = await prisma.profile.findUnique({
       where: { userId: user.id },
     });

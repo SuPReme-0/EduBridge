@@ -1,15 +1,29 @@
 import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { prisma } from '@/lib/db/client';
+import { generateObject } from 'ai';
+import { createGroq } from '@ai-sdk/groq';
+import { z } from 'zod';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { rateLimiters, checkRateLimit, getClientIdentifier } from '@/lib/rate-limit';
-import { z } from 'zod';
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 
-// Validation Schema
 const parseTextSchema = z.object({
   syllabusText: z.string().min(50).max(50000),
+});
+
+// Schema matching the AI's natural nested output
+const combinedSchema = z.object({
+  subjects: z.array(
+    z.object({
+      name: z.string(),
+      chapters: z.array(
+        z.object({
+          name: z.string(),
+          topics: z.array(z.string()),
+        })
+      ),
+    })
+  ),
 });
 
 export async function POST(req: Request) {
@@ -17,10 +31,8 @@ export async function POST(req: Request) {
   const startTime = Date.now();
 
   try {
-    // Rate Limiting
     const clientIp = getClientIdentifier(req);
     const rateLimit = await checkRateLimit(rateLimiters.profileWrite, clientIp);
-
     if (!rateLimit.success) {
       return NextResponse.json(
         { error: 'Too many parsing requests. Please wait before trying again.' },
@@ -28,15 +40,12 @@ export async function POST(req: Request) {
       );
     }
 
-    // Authenticate
     const supabase = await createServerSupabaseClient();
     const { data: { user }, error: authError } = await supabase.auth.getUser();
-
     if (authError || !user) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Validate Input
     const body = await req.json();
     const validatedData = parseTextSchema.parse(body);
 
@@ -47,44 +56,34 @@ export async function POST(req: Request) {
       );
     }
 
-    // Generate with Gemini
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    const { object: extracted } = await generateObject({
+      model: groq('llama-3.3-70b-versatile'),
+      providerOptions: {
+        groq: {
+          structuredOutputs: false,
+        },
+      },
+      system: 'You are an expert academic curriculum architect. Analyze the raw syllabus text and extract the core subjects and their respective chapters/topics. Return your answer in JSON format.',
+      prompt: `Extract the detailed syllabus structure from this text. Return ONLY valid JSON:\n\n${validatedData.syllabusText.substring(0, 30000)}`,
+      schema: combinedSchema,
+      temperature: 0.1,
+    });
 
-    const prompt = `You are an expert academic curriculum architect. Analyze the following raw syllabus text and extract the core subjects and their respective chapters/topics.
-
-CRITICAL INSTRUCTION: You MUST return ONLY valid JSON. No markdown fences, no conversational text.
-
-Required JSON Structure:
-{
-  "subjects": ["Subject 1 Name", "Subject 2 Name"],
-  "chapters": [
-    {
-      "subject": "Subject 1 Name",
-      "topics": ["Chapter 1 Name", "Chapter 2 Name"]
-    }
-  ]
-}
-
-Raw Syllabus Text:
-${validatedData.syllabusText.substring(0, 45000)}`;
-
-    const result = await model.generateContent(prompt);
-    const responseText = result.response.text();
-
-    // Clean potential markdown fences
-    const cleanedText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
-    const extracted = JSON.parse(cleanedText);
-
-    if (!extracted.subjects || !Array.isArray(extracted.subjects)) {
-      throw new Error('Invalid response format from AI');
-    }
+    // ✅ Correct transformation: group chapter titles per subject
+    const transformed = {
+      subjects: extracted.subjects.map((s) => s.name),
+      chapters: extracted.subjects.map((s) => ({
+        subject: s.name,
+        topics: s.chapters.map((c) => c.name), // chapter titles only
+      })),
+    };
 
     const duration = Date.now() - startTime;
-    console.log(`[Parse Text] Success in ${duration}ms | Request: ${requestId}`);
+    console.log(`[Parse Text] Success in ${duration}ms | Request: ${requestId} | Subjects: ${transformed.subjects.length}`);
 
     return NextResponse.json({
       success: true,
-      extracted,
+      extracted: transformed,
       message: 'Syllabus parsed successfully.',
     });
 
@@ -95,6 +94,13 @@ ${validatedData.syllabusText.substring(0, 45000)}`;
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Invalid input data.', details: error.errors },
+        { status: 400 }
+      );
+    }
+
+    if (error.name === 'TypeValidationError') {
+      return NextResponse.json(
+        { error: 'AI failed to format the syllabus properly. Please try manual entry.' },
         { status: 400 }
       );
     }

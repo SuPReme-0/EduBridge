@@ -1,3 +1,4 @@
+// app/api/doubts/route.ts
 import { NextResponse } from 'next/server';
 import { streamText } from 'ai';
 import { groq } from '@ai-sdk/groq';
@@ -5,11 +6,11 @@ import { prisma } from '@/lib/db/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
 import { rateLimiters, checkRateLimit, getClientIdentifier } from '@/lib/rate-limit';
 
-export const maxDuration = 60;
+export const maxDuration = 60; // Vercel timeout
 
-// Free-tier compatible model fallbacks
+// Free‑tier compatible model fallbacks
 const VISION_MODELS = ['llama-3.2-11b-vision-preview', 'llama-3.2-90b-vision-preview'] as const;
-const TEXT_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'] as const;
+const TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
 
 export async function POST(req: Request) {
   console.log("\n==========================================");
@@ -51,7 +52,7 @@ export async function POST(req: Request) {
     }
     console.log("✅ [Doubts API] 2. Rate Limit Passed.");
 
-    // 3. Parse Request - Use messages as-is from the client
+    // 3. Parse Request
     const payload = await req.json();
     console.log("✅ [Doubts API] 3. Payload Parsed. Keys:", Object.keys(payload));
 
@@ -62,7 +63,7 @@ export async function POST(req: Request) {
       return new Response('Invalid or empty messages.', { status: 400 });
     }
 
-    // 4. Fetch Profile & Chapter Data (Parallel for speed)
+    // 4. Fetch Profile & Chapter Data (Parallel)
     console.log("⏳ [Doubts API] 4. Fetching DB Context...");
     const [profile, targetChapter] = await Promise.all([
       prisma.profile.findUnique({
@@ -139,7 +140,7 @@ export async function POST(req: Request) {
       }
     }
 
-    // 6. Build System Prompt with warm‑hearted tone
+    // 6. Build System Prompt
     const userGrade = profile?.classLevel ?? 'unknown';
     const vibe = profile?.currentVibe || 'standard';
 
@@ -159,11 +160,11 @@ GUIDELINES:
 - If a visual diagram helps, use exactly: [Image of X]. Example: [Image of mitochondria cell structure].
 ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this chapter. End your response with a brief, friendly tip to keep reading the chapter for more context.` : ''}`;
 
-    // 7. Determine if the last message contains an image (via experimental_attachments)
+    // 7. Determine if the last message contains an image
     const lastMessage = messages[messages.length - 1];
     const hasImage = !!(lastMessage?.experimental_attachments?.length > 0);
 
-    // 8. Fallback Loop for Groq
+    // 8. Fallback Loop for Groq (consistent with other APIs)
     console.log(`🧠 [Doubts AI] 5. Routing to Groq. Has Image? ${hasImage}`);
     const modelList = hasImage ? VISION_MODELS : TEXT_MODELS;
     let result: any;
@@ -173,16 +174,13 @@ ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this 
     for (const model of modelList) {
       try {
         console.log(`   -> Attempting Model: ${model}`);
-
-        // Use maxOutputTokens for AI SDK v4
         result = await streamText({
           model: groq(model),
           system: systemPrompt,
-          messages, // Pass original messages – the SDK handles attachments internally
+          messages,
           temperature: 0.5,
-          maxOutputTokens: 1024, // v4 parameter
+          maxOutputTokens: 1024, // ✅ use maxTokens for AI SDK v4
         });
-
         modelName = model;
         console.log(`   -> ✅ Model ${model} connected successfully!`);
         break;
@@ -197,7 +195,7 @@ ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this 
       throw new Error(`All Groq models failed. Last error: ${lastError?.message}`);
     }
 
-    // 9. Create Streaming Response – use toTextStreamResponse (v4)
+    // 9. Create Streaming Response
     console.log("⚡ [Doubts AI] 6. Creating Stream Response...");
     const response = result.toTextStreamResponse();
 
@@ -210,7 +208,7 @@ ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this 
     response.headers.set('X-Chapter-Status', chapterStatus);
     response.headers.set('X-Request-ID', requestId);
     response.headers.set('X-Model-Used', modelName);
-    response.headers.set('Access-Control-Allow-Origin', '*'); // Ensure CORS for all responses
+    response.headers.set('Access-Control-Allow-Origin', '*');
 
     const duration = Date.now() - startTime;
     console.log(`🎉 [Doubts AI] 7. STREAMING STARTED in ${duration}ms using ${modelName}`);
