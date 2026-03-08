@@ -1,0 +1,371 @@
+// prisma/schema.prisma
+// FrazEdu - Production LMS Database Schema (FINAL)
+// Database: PostgreSQL (Supabase)
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres", "postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  extensions = [vector, pg_trgm, fuzzystrmatch]
+}
+
+// ============================================================================
+// ENUMS
+// ============================================================================
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum Tempo {
+  EASY
+  NORMAL
+  EXTREME
+}
+
+enum GenerationStatus {
+  PENDING
+  GENERATING
+  COMPLETED
+  FAILED
+  ARCHIVED
+}
+
+enum SyncStatus {
+  PENDING
+  SYNCING
+  COMPLETED
+  FAILED
+}
+
+// ============================================================================
+// CORE USER MODELS
+// ============================================================================
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  emailVerified DateTime?
+
+  role   String     @default("student")
+  status UserStatus @default(ACTIVE)
+
+  profile       Profile?
+  curriculums   Curriculum[]
+  sessions      Session[]
+  auditLogs     AuditLog[]
+  doubtSessions DoubtSession[]
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  @@index([email])
+  @@index([status])
+}
+
+// ============================================================================
+// PROFILE
+// ============================================================================
+
+model Profile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // --- Demographics ---
+  fullName      String?
+  age           Int?
+  gender        String?
+  school        String?
+  educationPath String  @default("school")
+  classLevel    Int     @default(10)
+  board         String?
+  location      Json?
+
+  // --- Personalization ---
+  learningTempo Tempo    @default(NORMAL)
+  currentVibe   String   @default("minimalist")
+  interests     String[]
+  hobbies       String[]
+
+  // --- Preferences & Config ---
+  themeConfig          Json?   @db.JsonB
+  themeVersion         String?
+  fontSize             Int     @default(16)
+  reduceMotion         Boolean @default(false)
+  highContrast         Boolean @default(false)
+  notificationSettings Json?   @db.JsonB
+  avatarUrl            String?
+
+  // --- Gamification Stats ---
+  totalStudyMinutes Int       @default(0)
+  currentStreak     Int       @default(0)
+  longestStreak     Int       @default(0)
+  totalPoints       Int       @default(0)
+  testsCompleted    Int       @default(0)
+  averageMastery    Int       @default(0)
+  lastActiveAt      DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Relations ---
+  feedbacks    Feedback[]
+  achievements Achievement[]
+
+  @@index([userId])
+  @@index([classLevel, board])
+  @@index([currentVibe])
+}
+
+// ============================================================================
+// ACHIEVEMENTS & FEEDBACK
+// ============================================================================
+
+model Achievement {
+  id          String    @id @default(cuid())
+  userId      String
+  name        String
+  description String
+  unlocked    Boolean   @default(false)
+  unlockedAt  DateTime?
+  progress    Int       @default(0)
+  total       Int       @default(1)
+  category    String
+
+  profile Profile @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId, category])
+  @@index([unlocked])
+}
+
+model Feedback {
+  id        String   @id @default(cuid())
+  userId    String
+  messageId String
+  type      String // 'like' or 'dislike'
+  createdAt DateTime @default(now())
+
+  user Profile @relation(fields: [userId], references: [userId], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([messageId])
+}
+
+// ============================================================================
+// CURRICULUM HIERARCHY
+// ============================================================================
+model Curriculum {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  title        String
+  description  String? @db.Text
+  syllabusText String? @db.Text
+  sourceUrl    String?
+
+  // --- New fields from onboarding ---
+  educationPath String?  // "school", "diploma", "bachelor", "master"
+  classLevel    String?  // e.g., "10" (stored as string for flexibility)
+  board         String?  // e.g., "CBSE"
+  referenceBooks Json?   @db.JsonB // Array of selected books metadata
+
+  status GenerationStatus @default(PENDING)
+
+  subjects Subject[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, status])
+  @@index([educationPath, classLevel, board])
+}
+
+model Subject {
+  id           String     @id @default(uuid())
+  curriculumId String
+  curriculum   Curriculum @relation(fields: [curriculumId], references: [id], onDelete: Cascade)
+
+  name   String
+  bookId String?
+  book   Book?   @relation(fields: [bookId], references: [id], onDelete: SetNull)
+
+  // ✅ ADDED: Order field for proper subject sequencing
+  order Int @default(0)
+
+  status GenerationStatus @default(PENDING)
+
+  chapters Chapter[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([curriculumId])
+  @@index([bookId])
+  @@index([order])
+}
+
+model Chapter {
+  id        String  @id @default(uuid())
+  subjectId String
+  subject   Subject @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  chapterNumber Int
+  title         String
+  slug          String? @unique
+
+  pageRange String?
+
+  status GenerationStatus @default(PENDING)
+
+  mixedContent Json? @db.JsonB
+
+  estimatedMinutes Int      @default(15)
+  difficultyLevel  Int      @default(5)
+  tags             String[]
+
+  // ✅ ADDED: Order field for proper chapter sequencing
+  order Int @default(0)
+
+  progress          Progress[] @relation("ChapterProgress")
+  recommendedNextIn Progress[] @relation("NextRecommendedChapter")
+
+  homework      Homework?
+  doubtSessions DoubtSession[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([subjectId, chapterNumber])
+  @@index([subjectId, chapterNumber])
+  @@index([subjectId, order])
+  @@index([status])
+}
+
+// ============================================================================
+// PROGRESS, HOMEWORK & DOUBTS
+// ============================================================================
+
+model Progress {
+  id     String @id @default(uuid())
+  userId String
+
+  chapterId String
+  chapter   Chapter @relation("ChapterProgress", fields: [chapterId], references: [id], onDelete: Cascade)
+
+  score        Int?
+  masteryLevel Float @default(0.0)
+
+  timeSpentSeconds Int       @default(0)
+  startedAt        DateTime  @default(now())
+  completedAt      DateTime?
+
+  nextRecommendedId String?
+  nextRecommended   Chapter? @relation("NextRecommendedChapter", fields: [nextRecommendedId], references: [id], onDelete: SetNull)
+
+  syncStatus SyncStatus @default(COMPLETED)
+  updatedAt  DateTime   @updatedAt
+
+  @@unique([userId, chapterId])
+  @@index([userId, masteryLevel])
+}
+
+model Homework {
+  id        String  @id @default(uuid())
+  chapterId String  @unique
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  tasks   Json      @db.JsonB
+  dueDate DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model DoubtSession {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  chapterId String
+  chapter   Chapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+
+  status String @default("OPEN")
+
+  messages Json @db.JsonB
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, chapterId])
+  @@index([status])
+}
+
+// ============================================================================
+// LIBRARY (Books)
+// ============================================================================
+
+model Book {
+  id              String  @id @default(uuid())
+  title           String
+  author          String?
+  publisher       String?
+  classLevel      Int
+  board           String
+  subjectCategory String
+  coverUrl        String?
+
+  subjectsUsing Subject[]
+
+  createdAt DateTime @default(now())
+
+  @@index([classLevel, board, subjectCategory])
+}
+
+// ============================================================================
+// INFRASTRUCTURE
+// ============================================================================
+
+model Session {
+  id              String   @id @default(uuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  startTime       DateTime @default(now())
+  durationSeconds Int?
+  ipAddress       String?  @db.VarChar(45)
+
+  @@index([userId, startTime])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  userId       String?
+  user         User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  action       String
+  resourceType String
+  resourceId   String
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+}
+
+model BackgroundJob {
+  id          String   @id @default(uuid())
+  type        String
+  status      String   @default("PENDING")
+  payload     Json     @db.JsonB
+  result      Json?    @db.JsonB
+  attempts    Int      @default(0)
+  scheduledAt DateTime @default(now())
+
+  @@index([status, scheduledAt])
+}
