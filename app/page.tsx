@@ -1,6 +1,7 @@
 // app/page.tsx
 'use client';
 
+import { Suspense } from 'react';
 import Image from 'next/image';
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -262,7 +263,7 @@ const CreatorSection = ({ theme }: { theme: any }) => (
 // ============================================================================
 // MAIN COMPONENT
 // ============================================================================
-export default function HomePage() {
+function HomePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, updateProfile } = useStore();
@@ -337,210 +338,180 @@ export default function HomePage() {
 
   // ============================================================================
   // BOOT SCREEN (Futuristic with round logo focus)
-  // Replace the entire if (isBooting) block with this:
-
-if (isBooting) {
-  return (
-    <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center overflow-hidden">
-      {/* Deep space gradient */}
-      <div className="absolute inset-0 bg-gradient-to-br from-[#0A0A0F] via-[#050510] to-black" />
-      
-      {/* Twinkling stars */}
-      {[...Array(100)].map((_, i) => (
-        <motion.div
-          key={`star-${i}`}
-          initial={{ opacity: 0, scale: 0 }}
-          animate={{
-            opacity: [0.2, 1, 0.2],
-            scale: [0.5, 1, 0.5],
-          }}
-          transition={{
-            duration: Math.random() * 3 + 2,
-            repeat: Infinity,
-            delay: Math.random() * 5,
-            ease: "easeInOut",
-          }}
-          className="absolute rounded-full bg-white"
-          style={{
-            width: Math.random() * 2 + 1,
-            height: Math.random() * 2 + 1,
-            left: `${Math.random() * 100}%`,
-            top: `${Math.random() * 100}%`,
-            boxShadow: `0 0 ${Math.random() * 4 + 2}px rgba(255,255,255,0.8)`,
-          }}
-        />
-      ))}
-
-      {/* Black hole gravitational lensing effect */}
-      <motion.div
-        animate={{
-          scale: [1, 1.1, 1],
-          rotate: [0, 360],
-        }}
-        transition={{
-          duration: 20,
-          repeat: Infinity,
-          ease: "linear",
-        }}
-        className="absolute w-[600px] h-[600px] rounded-full bg-gradient-to-r from-purple-900/20 via-cyan-900/20 to-transparent blur-3xl"
-      />
-
-      {/* Spiraling particles towards center */}
-      {[...Array(30)].map((_, i) => {
-        const angle = (i / 30) * Math.PI * 2;
-        const radius = 300 + Math.random() * 200;
-        return (
+  // Replaced rings with glittering jitter and rays of light
+  // ============================================================================
+  if (isBooting) {
+    return (
+      <div className="fixed inset-0 z-50 bg-black flex flex-col items-center justify-center overflow-hidden">
+        {/* Deep space gradient */}
+        <div className="absolute inset-0 bg-gradient-to-br from-[#0A0A0F] via-[#050510] to-black" />
+        
+        {/* Twinkling stars */}
+        {[...Array(100)].map((_, i) => (
           <motion.div
-            key={`spiral-${i}`}
-            initial={{
-              x: Math.cos(angle) * radius,
-              y: Math.sin(angle) * radius,
-              opacity: 0.8,
-              scale: 1,
-            }}
+            key={`star-${i}`}
+            initial={{ opacity: 0, scale: 0 }}
             animate={{
-              x: [Math.cos(angle) * radius, 0],
-              y: [Math.sin(angle) * radius, 0],
-              opacity: [0.8, 0],
-              scale: [1, 0.1],
+              opacity: [0.2, 1, 0.2],
+              scale: [0.5, 1, 0.5],
             }}
             transition={{
-              duration: 3 + Math.random() * 2,
+              duration: Math.random() * 3 + 2,
               repeat: Infinity,
-              delay: i * 0.1,
-              ease: "easeIn",
+              delay: Math.random() * 5,
+              ease: "easeInOut",
             }}
-            className="absolute w-1 h-1 rounded-full bg-cyan-400"
+            className="absolute rounded-full bg-white"
             style={{
-              boxShadow: '0 0 10px #06b6d4',
+              width: Math.random() * 2 + 1,
+              height: Math.random() * 2 + 1,
+              left: `${Math.random() * 100}%`,
+              top: `${Math.random() * 100}%`,
+              boxShadow: `0 0 ${Math.random() * 4 + 2}px rgba(255,255,255,0.8)`,
             }}
           />
-        );
-      })}
+        ))}
 
-      {/* Energy waves */}
-      {[...Array(3)].map((_, i) => (
+        {/* Black hole gravitational lensing effect */}
         <motion.div
-          key={`wave-${i}`}
-          initial={{ scale: 0.8, opacity: 0.6 }}
-          animate={{ scale: 2, opacity: 0 }}
+          animate={{
+            scale: [1, 1.1, 1],
+            rotate: [0, 360],
+          }}
           transition={{
-            duration: 3 + i,
+            duration: 20,
             repeat: Infinity,
-            delay: i * 0.5,
-            ease: "easeOut",
+            ease: "linear",
           }}
-          className="absolute rounded-full border-2 border-cyan-400/30"
-          style={{ width: '200px', height: '200px' }}
-        />
-      ))}
-
-      {/* Central void core with logo */}
-      <div className="relative z-10 mb-12">
-        {/* Accretion disk */}
-        <motion.div
-          animate={{ rotate: 360 }}
-          transition={{ duration: 15, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 rounded-full border-t-2 border-r-2 border-cyan-400/50"
-          style={{ width: '280px', height: '280px', left: '-40px', top: '-40px' }}
-        />
-        <motion.div
-          animate={{ rotate: -360 }}
-          transition={{ duration: 10, repeat: Infinity, ease: "linear" }}
-          className="absolute inset-0 rounded-full border-l-2 border-b-2 border-purple-400/50"
-          style={{ width: '240px', height: '240px', left: '-20px', top: '-20px' }}
+          className="absolute w-[600px] h-[600px] rounded-full bg-gradient-to-r from-purple-900/20 via-cyan-900/20 to-transparent blur-3xl"
         />
 
-        {/* Logo with intense glow */}
-        <motion.div
-          initial={{ scale: 0, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ duration: 1.5, type: 'spring', stiffness: 100 }}
-          className="relative w-48 h-48 md:w-56 md:h-56 rounded-full overflow-hidden shadow-2xl"
-          style={{
-            boxShadow: '0 0 50px #06b6d4, 0 0 100px #8b5cf6',
-          }}
+        {/* Spiraling particles towards center */}
+        {[...Array(30)].map((_, i) => {
+          const angle = (i / 30) * Math.PI * 2;
+          const radius = 300 + Math.random() * 200;
+          return (
+            <motion.div
+              key={`spiral-${i}`}
+              initial={{
+                x: Math.cos(angle) * radius,
+                y: Math.sin(angle) * radius,
+                opacity: 0.8,
+                scale: 1,
+              }}
+              animate={{
+                x: [Math.cos(angle) * radius, 0],
+                y: [Math.sin(angle) * radius, 0],
+                opacity: [0.8, 0],
+                scale: [1, 0.1],
+              }}
+              transition={{
+                duration: 3 + Math.random() * 2,
+                repeat: Infinity,
+                delay: i * 0.1,
+                ease: "easeIn",
+              }}
+              className="absolute w-1 h-1 rounded-full bg-cyan-400"
+              style={{
+                boxShadow: '0 0 10px #06b6d4',
+              }}
+            />
+          );
+        })}
+
+        {/* Central void core with logo */}
+        <div className="relative z-10 mb-12">
+          {/* Logo with intense glow and jitter effect */}
+          <motion.div
+            
+  initial={{ scale: 0, opacity: 0 }}
+  animate={{ scale: 1, opacity: 1 }}
+  transition={{ scale: { duration: 1.5, type: 'spring', stiffness: 100 } }}
+  className="relative w-48 h-48 md:w-56 md:h-56 rounded-full overflow-hidden shadow-2xl"
+  style={{
+              boxShadow: '0 0 50px #06b6d4, 0 0 100px #8b5cf6',
+            }}
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/30 to-purple-500/30 animate-pulse" />
+            <Image
+              src="/logo.png"
+              alt="EduBridge"
+              width={200}
+              height={200}
+              priority
+              className="w-full h-full object-cover scale-110"
+            />
+          </motion.div>
+        </div>
+
+        {/* Glitching title */}
+        <motion.h1
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, delay: 0.5 }}
+          className="text-5xl md:text-7xl font-black text-white/90 tracking-tighter mb-3 z-10 relative"
         >
-          <div className="absolute inset-0 bg-gradient-to-br from-cyan-500/30 to-purple-500/30 animate-pulse" />
-          <Image
-            src="/logo.png"
-            alt="EduBridge"
-            width={200}
-            height={200}
-            priority
-            className="w-full h-full object-cover scale-110"
+          <span className="relative inline-block">
+            <span className="relative z-10">EduBridge</span>
+            <motion.span
+              animate={{ x: [-3, 3, -3] }}
+              transition={{ duration: 0.15, repeat: Infinity }}
+              className="absolute inset-0 text-cyan-400/60 blur-sm"
+            >
+              EduBridge
+            </motion.span>
+            <motion.span
+              animate={{ x: [3, -3, 3] }}
+              transition={{ duration: 0.1, repeat: Infinity, delay: 0.05 }}
+              className="absolute inset-0 text-purple-400/60 blur-sm"
+            >
+              EduBridge
+            </motion.span>
+          </span>
+        </motion.h1>
+
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.9, delay: 0.7 }}
+          className="text-cyan-300/70 text-xs font-mono tracking-[0.4em] uppercase mb-16 z-10"
+        >
+          Neural Learning Matrix v2.1
+        </motion.p>
+
+        {/* Launch button */}
+        <motion.button
+          initial={{ opacity: 0, y: 25 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, delay: 0.9 }}
+          onClick={() => { setIsBooting(false); setShowContent(true); }}
+          className="relative z-30 group"
+        >
+          <motion.div
+            animate={{ scale: [1, 1.3, 1] }}
+            transition={{ duration: 2, repeat: Infinity }}
+            className="absolute -inset-2 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full blur-xl opacity-70 group-hover:opacity-90"
           />
+          <div className="relative px-12 py-5 bg-black/70 backdrop-blur-2xl rounded-full border border-cyan-400/50 flex items-center gap-4 text-white font-bold uppercase tracking-widest text-sm hover:bg-black/80 transition">
+            <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse" />
+            Initialize System
+            <ChevronRight className="w-4 h-4 text-cyan-300 group-hover:translate-x-1 transition-transform" />
+          </div>
+        </motion.button>
+
+        {/* Loading text */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 1.2 }}
+          className="absolute bottom-12 flex items-center gap-3 text-cyan-400/60 text-xs font-mono"
+        >
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Entering the void...</span>
         </motion.div>
       </div>
-
-      {/* Glitching title */}
-      <motion.h1
-        initial={{ opacity: 0, y: 30 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.9, delay: 0.5 }}
-        className="text-5xl md:text-7xl font-black text-white/90 tracking-tighter mb-3 z-10 relative"
-      >
-        <span className="relative inline-block">
-          <span className="relative z-10">EduBridge</span>
-          <motion.span
-            animate={{ x: [-3, 3, -3] }}
-            transition={{ duration: 0.15, repeat: Infinity }}
-            className="absolute inset-0 text-cyan-400/60 blur-sm"
-          >
-            EduBridge
-          </motion.span>
-          <motion.span
-            animate={{ x: [3, -3, 3] }}
-            transition={{ duration: 0.1, repeat: Infinity, delay: 0.05 }}
-            className="absolute inset-0 text-purple-400/60 blur-sm"
-          >
-            EduBridge
-          </motion.span>
-        </span>
-      </motion.h1>
-
-      <motion.p
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ duration: 0.9, delay: 0.7 }}
-        className="text-cyan-300/70 text-xs font-mono tracking-[0.4em] uppercase mb-16 z-10"
-      >
-        Neural Learning Matrix v2.1
-      </motion.p>
-
-      {/* Launch button */}
-      <motion.button
-        initial={{ opacity: 0, y: 25 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.9, delay: 0.9 }}
-        onClick={() => { setIsBooting(false); setShowContent(true); }}
-        className="relative z-30 group"
-      >
-        <motion.div
-          animate={{ scale: [1, 1.3, 1] }}
-          transition={{ duration: 2, repeat: Infinity }}
-          className="absolute -inset-2 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full blur-xl opacity-70 group-hover:opacity-90"
-        />
-        <div className="relative px-12 py-5 bg-black/70 backdrop-blur-2xl rounded-full border border-cyan-400/50 flex items-center gap-4 text-white font-bold uppercase tracking-widest text-sm hover:bg-black/80 transition">
-          <Sparkles className="w-4 h-4 text-cyan-300 animate-pulse" />
-          Initialize System
-          <ChevronRight className="w-4 h-4 text-cyan-300 group-hover:translate-x-1 transition-transform" />
-        </div>
-      </motion.button>
-
-      {/* Loading text */}
-      <motion.div
-        initial={{ opacity: 0 }}
-        animate={{ opacity: 1 }}
-        transition={{ delay: 1.2 }}
-        className="absolute bottom-12 flex items-center gap-3 text-cyan-400/60 text-xs font-mono"
-      >
-        <Loader2 className="w-4 h-4 animate-spin" />
-        <span>Entering the void...</span>
-      </motion.div>
-    </div>
-  );
-}
+    );
+  }
 
   // ============================================================================
   // RETURNING USER PAGE (Enhanced with animations)
@@ -1046,5 +1017,16 @@ if (isBooting) {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+// ============================================================================
+// PAGE EXPORT WITH SUSPENSE BOUNDARY
+// ============================================================================
+export default function Page() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-black flex items-center justify-center"><Loader2 className="w-8 h-8 animate-spin text-cyan-400" /></div>}>
+      <HomePage />
+    </Suspense>
   );
 }
