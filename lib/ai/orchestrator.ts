@@ -1,52 +1,83 @@
 import { generateObject } from 'ai';
+import { createGroq } from '@ai-sdk/groq';
+import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { rateLimiters, checkRateLimit, recordTokenUsage } from '@/lib/rate-limit';
-import { createGroq } from '@ai-sdk/groq';
 
 const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
+const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_API_KEY });
+
+// Model mapping for different tasks
+const MODELS = {
+  // Heavy tasks (e.g., topic expansion, blueprint generation)
+  heavy: {
+    groq: 'llama-3.3-70b-versatile',
+    google: 'gemini-2.5-pro',
+  },
+  // Light tasks (e.g., concept extraction, evaluation)
+  light: {
+    groq: 'llama-3.1-8b-instant',
+    google: 'gemini-2.5-flash',
+  },
+};
 
 // ============================================================================
-// 1. HELPER: SMART EXPONENTIAL BACKOFF WITH ERROR FILTERING
+// 1. HELPER: CALL WITH FALLBACK (Gemini first, then Groq)
 // ============================================================================
-async function withRetry<T>(
-  fn: () => Promise<T>,
-  retries = 3,
+async function callWithFallback<T>(
+  fn: (provider: 'groq' | 'google', model: string) => Promise<T>,
+  taskType: 'heavy' | 'light' = 'light',
+  retriesPerProvider = 2,
   baseDelayMs = 2000
 ): Promise<T> {
-  let attempt = 0;
-  while (attempt < retries) {
-    try {
-      return await fn();
-    } catch (error: any) {
-      attempt++;
-      
-      const isValidationError =
-        error.name === 'TypeValidationError' ||
-        error.name === 'ZodError' ||
-        error?.statusCode === 400;
+  // Prioritize Google (Gemini) first, then Groq
+  const providers: Array<'groq' | 'google'> = ['google', 'groq'];
+  
+  for (const provider of providers) {
+    let attempt = 0;
+    while (attempt <= retriesPerProvider) {
+      try {
+        const model = MODELS[taskType][provider];
+        return await fn(provider, model);
+      } catch (error: any) {
+        attempt++;
+        const isValidationError =
+          error.name === 'TypeValidationError' ||
+          error.name === 'ZodError' ||
+          error?.statusCode === 400;
 
-      if (isValidationError) {
-        console.error('[Orchestrator] Fatal Schema/Request Error. Bypassing retries.', error);
-        throw error;
+        if (isValidationError) {
+          console.error(`[Orchestrator] Fatal Schema Error on ${provider}.`, error);
+          throw error; // validation errors are not retryable
+        }
+
+        const isRetryable =
+          error?.statusCode === 429 ||
+          (error?.statusCode && error.statusCode >= 500) ||
+          error.code === 'ETIMEDOUT' ||
+          error.code === 'ECONNRESET';
+
+        if (!isRetryable) {
+          // Non-retryable error for this provider, break out to try next provider
+          console.warn(`[Orchestrator] Non-retryable error on ${provider}, switching provider.`, error);
+          break; // exit while loop, move to next provider
+        }
+
+        if (attempt > retriesPerProvider) {
+          console.warn(`[Orchestrator] ${provider} failed after ${retriesPerProvider} retries, switching provider.`);
+          break; // exit while loop, move to next provider
+        }
+
+        // Retry with exponential backoff
+        const waitMs = Math.min(baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000, 60000);
+        console.warn(`[Orchestrator] ${provider} retry ${attempt}/${retriesPerProvider} in ${Math.round(waitMs / 1000)}s...`);
+        await new Promise(resolve => setTimeout(resolve, waitMs));
       }
-
-      const isRetryable =
-        error?.statusCode === 429 ||
-        (error?.statusCode && error.statusCode >= 500) ||
-        error.code === 'ETIMEDOUT' ||
-        error.code === 'ECONNRESET';
-
-      if (!isRetryable || attempt === retries) {
-        throw error;
-      }
-
-      const waitMs = Math.min(baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000, 60000);
-      console.warn(`[Orchestrator Retry] Groq API choked (Attempt ${attempt}/${retries}). Retrying in ${Math.round(waitMs / 1000)}s...`);
-      await new Promise((resolve) => setTimeout(resolve, waitMs));
     }
   }
-  throw new Error('Unreachable');
+  
+  throw new Error('All providers failed after exhausting retries.');
 }
 
 // ============================================================================
@@ -99,7 +130,7 @@ const STORY_TONES = [
 ] as const;
 
 // ============================================================================
-// 4. SCHEMAS
+// 4. SCHEMAS (unchanged)
 // ============================================================================
 const TopicSchema = z.object({
   topicNumber: z.number(),
@@ -237,8 +268,9 @@ const ContentBlockSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
+// Allow 3-12 blocks to accommodate AI variability
 const TopicExpansionSchema = z.object({
-  blocks: z.array(ContentBlockSchema).min(5).max(10),
+  blocks: z.array(ContentBlockSchema).min(3).max(12),
 });
 
 export type UserProfile = {
@@ -263,30 +295,97 @@ export type GenerateChapterParams = {
 };
 
 // ============================================================================
-// 5. KEY TOPIC EXTRACTOR (8B)
+// 5. CACHE TYPES AND IN-MEMORY STORE
 // ============================================================================
-function getDefaultConceptsForSubject(subjectName: string, classLevel: number): string[] {
-  return [`${subjectName} fundamentals`, `${subjectName} core principles`, `${subjectName} advanced topics`];
+type StoryContext = {
+  characters: string[];
+  locations: string[];
+  unresolvedThreads: string[];
+  lastEvents: string;
+  topicSummaries: string[]; // Keep last 3 summaries to avoid overflow
+};
+
+type ChapterCache = {
+  blueprint?: z.infer<typeof ChapterBlueprintSchema>;
+  context?: StoryContext;
+  expiresAt: number;
+};
+
+const chapterCache = new Map<string, ChapterCache>();
+const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// ============================================================================
+// 6. KEY TOPIC EXTRACTOR – with fallback
+// ============================================================================
+function getDefaultConceptsForSubject(subjectName: string, classLevel: number): {
+  concepts: string[];
+  foundational: string[];
+  advanced: string[];
+} {
+  const lower = subjectName.toLowerCase();
+  if (lower.includes('math')) {
+    return {
+      concepts: ['Number Systems', 'Basic Operations', 'Fractions', 'Algebra', 'Geometry', 'Trigonometry', 'Calculus', 'Statistics'],
+      foundational: ['Number Systems', 'Basic Operations', 'Fractions', 'Algebra', 'Geometry'],
+      advanced: ['Trigonometry', 'Calculus', 'Statistics', 'Linear Algebra', 'Differential Equations'],
+    };
+  }
+  if (lower.includes('physics')) {
+    return {
+      concepts: ['Motion', 'Forces', 'Energy', 'Waves', 'Electricity', 'Magnetism', 'Thermodynamics', 'Quantum Physics'],
+      foundational: ['Motion', 'Forces', 'Energy', 'Waves', 'Electricity'],
+      advanced: ['Magnetism', 'Thermodynamics', 'Quantum Physics', 'Relativity', 'Nuclear Physics'],
+    };
+  }
+  if (lower.includes('history')) {
+    return {
+      concepts: ['Ancient Civilizations', 'Middle Ages', 'Renaissance', 'Modern Era', 'Contemporary History', 'World Wars', 'Colonialism'],
+      foundational: ['Ancient Civilizations', 'Middle Ages', 'Renaissance', 'Modern Era'],
+      advanced: ['Contemporary History', 'World Wars', 'Colonialism', 'Post-Colonialism', 'Globalization'],
+    };
+  }
+  if (lower.includes('economics')) {
+    return {
+      concepts: ['Supply & Demand', 'Markets', 'GDP', 'Inflation', 'Trade', 'Fiscal Policy', 'Monetary Policy', 'Development Economics'],
+      foundational: ['Supply & Demand', 'Markets', 'GDP', 'Inflation', 'Trade'],
+      advanced: ['Fiscal Policy', 'Monetary Policy', 'Development Economics', 'Game Theory', 'Econometrics'],
+    };
+  }
+  return {
+    concepts: [`${subjectName} fundamentals`, `${subjectName} core principles`, `${subjectName} intermediate topics`, `${subjectName} advanced topics`],
+    foundational: [`${subjectName} fundamentals`, `${subjectName} core principles`],
+    advanced: [`${subjectName} intermediate topics`, `${subjectName} advanced topics`],
+  };
 }
 
 export async function extractBookConcepts(
+  userId: string,
   bookTitles: string[],
   subjectName: string,
   classLevel: number
 ): Promise<{ concepts: string[]; foundationalTopics: string[]; advancedTopics: string[] }> {
   console.log(`[Orchestrator] Extracting concepts from ${bookTitles.length} books for ${subjectName}...`);
   
+  if (!bookTitles.length) {
+    const defaults = getDefaultConceptsForSubject(subjectName, classLevel);
+    return {
+      concepts: defaults.concepts,
+      foundationalTopics: defaults.foundational,
+      advancedTopics: defaults.advanced,
+    };
+  }
+
   try {
-    const result = await withRetry(async () => {
+    const result = await callWithFallback(async (provider, model) => {
       const { object, usage } = await withTimeout(
         generateObject({
-          model: groq('llama-3.1-8b-instant'),
-          providerOptions: {
+          model: provider === 'groq' ? groq(model) : google(model),
+          providerOptions: provider === 'groq' ? {
             groq: {
               structuredOutputs: false,
               response_format: { type: 'json_object' },
             },
-          },
+          } : undefined,
           system: `You are an expert curriculum designer. Extract key concepts from book titles.`,
           prompt: `Extract key concepts from these reference books for ${subjectName} (Class ${classLevel}):
 Books: ${bookTitles.join(', ')}
@@ -303,24 +402,26 @@ Return a JSON object with:
         }),
         45000
       );
-      if (usage?.totalTokens) await recordTokenUsage('extractBookConcepts', usage.totalTokens);
+      if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
       return object;
-    });
+    }, 'light'); // light task
+
     return result;
   } catch (error) {
     console.error(`[Orchestrator] Concept extraction failed, using fallback.`, error);
+    const defaults = getDefaultConceptsForSubject(subjectName, classLevel);
     return {
-      concepts: getDefaultConceptsForSubject(subjectName, classLevel),
-      foundationalTopics: getDefaultConceptsForSubject(subjectName, classLevel).slice(0,5),
-      advancedTopics: getDefaultConceptsForSubject(subjectName, classLevel).slice(0,5),
+      concepts: defaults.concepts,
+      foundationalTopics: defaults.foundational,
+      advancedTopics: defaults.advanced,
     };
   }
 }
-
 // ============================================================================
-// 6. CURRICULUM PLANNER (8B)
+// 7. CURRICULUM PLANNER – with improved prompt and fallback
 // ============================================================================
 export async function generateCurriculumPlan(
+  userId: string,
   subjectName: string,
   classLevel: number,
   referenceBooks: string[],
@@ -338,20 +439,36 @@ export async function generateCurriculumPlan(
 }> {
   console.log(`[Orchestrator] Planning ${totalChapters}-chapter curriculum for ${subjectName}...`);
   
-  const bookConcepts = await extractBookConcepts(referenceBooks, subjectName, classLevel);
+  const bookConcepts = await extractBookConcepts(userId, referenceBooks, subjectName, classLevel);
   
-  const plan = await withRetry(async () => {
-    const { object, usage } = await withTimeout(
-      generateObject({
-        model: groq('llama-3.1-8b-instant'),
-        providerOptions: {
-          groq: {
-            structuredOutputs: false,
-            response_format: { type: 'json_object' },
-          },
-        },
-        system: `You are the EduBridge Master Architect. Create a comprehensive curriculum plan.`,
-        prompt: `Create a ${totalChapters}-chapter curriculum plan for ${subjectName} (Class ${classLevel}).
+  try {
+    const plan = await callWithFallback(async (provider, model) => {
+      const { object, usage } = await withTimeout(
+        generateObject({
+          model: provider === 'groq' ? groq(model) : google(model),
+          providerOptions: provider === 'groq' ? {
+            groq: {
+              structuredOutputs: false,
+              response_format: { type: 'json_object' },
+            },
+          } : undefined,
+          system: `You are the EduBridge Master Architect. Create a comprehensive curriculum plan.`,
+          prompt: `Create a ${totalChapters}-chapter curriculum plan for ${subjectName} (Class ${classLevel}).
+
+The response MUST be a JSON object with the following exact structure:
+{
+  "chapters": [
+    {
+      "chapterNumber": number,
+      "chapterTitle": string,
+      "keyTopics": [ "topic1", "topic2", ... ],  // 3-10 topics per chapter
+      "estimatedMinutes": number,                // estimated study time per chapter
+      "difficulty": "beginner" | "intermediate" | "advanced"
+    }
+  ],
+  "totalEstimatedMinutes": number,               // sum of all chapter minutes
+  "learningObjectives": [ "objective1", "objective2", ... ] // overall objectives
+}
 
 Reference Books: ${referenceBooks.join(', ')}
 
@@ -360,32 +477,143 @@ Extracted Concepts:
 - Foundational Topics: ${bookConcepts.foundationalTopics.join(', ')}
 - Advanced Topics: ${bookConcepts.advancedTopics.join(', ')}
 
-Return a JSON object with chapters, totalEstimatedMinutes, and learningObjectives.`,
-        schema: z.object({
-          chapters: z.array(z.object({
-            chapterNumber: z.number(),
-            chapterTitle: z.string(),
-            keyTopics: z.array(z.string()).min(3).max(10),
-            estimatedMinutes: z.number(),
-            difficulty: z.enum(['beginner', 'intermediate', 'advanced']),
-          })).min(20).max(40),
-          totalEstimatedMinutes: z.number(),
-          learningObjectives: z.array(z.string()),
+Return ONLY the JSON object. Do not include any explanation or markdown.`,
+          schema: z.object({
+            chapters: z.array(z.object({
+              chapterNumber: z.number(),
+              chapterTitle: z.string(),
+              keyTopics: z.array(z.string()).min(3).max(10),
+              estimatedMinutes: z.number(),
+              difficulty: z.enum(['beginner', 'intermediate', 'advanced']),
+            })).min(5).max(50),
+            totalEstimatedMinutes: z.number(),
+            learningObjectives: z.array(z.string()),
+          }),
+          temperature: 0.2, // lower temperature for deterministic output
         }),
-        temperature: 0.5,
-      }),
-      60000
-    );
-    if (usage?.totalTokens) await recordTokenUsage('generateCurriculumPlan', usage.totalTokens);
-    return object;
-  });
-  
-  console.log(`[Orchestrator] ✅ Generated ${plan.chapters.length} chapter plan for ${subjectName}`);
-  return plan;
+        60000
+      );
+      if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
+      return object;
+    }, 'light'); // light task
+
+    console.log(`[Orchestrator] ✅ Generated ${plan.chapters.length} chapter plan for ${subjectName}`);
+    return plan;
+  } catch (error) {
+    console.error(`[Orchestrator] ⚠️ All providers failed to generate a valid plan. Falling back to default plan.`, error);
+    
+    // Fallback: generate a simple plan from default concepts
+    const defaults = getDefaultConceptsForSubject(subjectName, classLevel);
+    const chapterCount = Math.min(totalChapters, defaults.concepts.length);
+    const chapters = Array.from({ length: chapterCount }, (_, i) => {
+      const difficulty: 'beginner' | 'intermediate' | 'advanced' = 
+        i < chapterCount * 0.33 ? 'beginner' :
+        i < chapterCount * 0.66 ? 'intermediate' : 'advanced';
+      return {
+        chapterNumber: i + 1,
+        chapterTitle: `Chapter ${i + 1}: ${defaults.concepts[i] || `${subjectName} Topic ${i + 1}`}`,
+        keyTopics: [defaults.concepts[i] || `Introduction to ${subjectName}`],
+        estimatedMinutes: 45,
+        difficulty,
+      };
+    });
+    const totalEstimatedMinutes = chapters.reduce((sum, ch) => sum + ch.estimatedMinutes, 0);
+    const learningObjectives = [
+      `Master the core concepts of ${subjectName}.`,
+      `Apply ${subjectName} principles to solve problems.`,
+      `Understand the real-world applications of ${subjectName}.`,
+    ];
+    
+    console.log(`[Orchestrator] ✅ Generated fallback plan with ${chapters.length} chapters for ${subjectName}`);
+    return {
+      chapters,
+      totalEstimatedMinutes,
+      learningObjectives,
+    };
+  }
 }
 
 // ============================================================================
-// 7. TOPIC EXPANSION (70B for high‑quality stories)
+// 8. STORY CONTEXT UPDATER – with fallback
+// ============================================================================
+async function updateStoryContext(
+  userId: string,
+  previousContext: StoryContext,
+  newBlocks: any[],
+  topicTitle: string
+): Promise<StoryContext> {
+  const storyBlocks = newBlocks
+    .filter(b => b.type === 'story')
+    .map(b => b.content)
+    .join('\n\n');
+
+  if (!storyBlocks) return previousContext;
+
+  const prompt = `
+You are a story summarizer. Given the previous story state and new story content, extract updates.
+
+Previous state:
+- Characters: ${previousContext.characters.join(', ') || 'none'}
+- Locations: ${previousContext.locations.join(', ') || 'none'}
+- Unresolved threads: ${previousContext.unresolvedThreads.join(', ') || 'none'}
+- Last events: ${previousContext.lastEvents || 'story begins'}
+
+New story content for topic "${topicTitle}":
+${storyBlocks}
+
+Return a JSON object with:
+- "newCharacters": array of character names introduced (if any)
+- "newLocations": array of location names introduced
+- "updatedThreads": array of unresolved plot threads (keep previous ones, add new, remove resolved)
+- "latestEvents": a one‑sentence summary of what just happened
+- "topicSummary": a one‑line summary of this topic's educational + narrative contribution
+`;
+
+  const result = await callWithFallback(async (provider, model) => {
+    const { object, usage } = await withTimeout(
+      generateObject({
+        model: provider === 'groq' ? groq(model) : google(model),
+        providerOptions: provider === 'groq' ? {
+          groq: {
+            structuredOutputs: false,
+            response_format: { type: 'json_object' },
+          },
+        } : undefined,
+        schema: z.object({
+          newCharacters: z.array(z.string()),
+          newLocations: z.array(z.string()),
+          updatedThreads: z.array(z.string()),
+          latestEvents: z.string(),
+          topicSummary: z.string(),
+        }),
+        prompt,
+        temperature: 0.3,
+      }),
+      45000
+    );
+    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
+    return object;
+  }, 'light'); // light task
+
+  const updated = {
+    characters: [...new Set([...previousContext.characters, ...result.newCharacters])],
+    locations: [...new Set([...previousContext.locations, ...result.newLocations])],
+    unresolvedThreads: result.updatedThreads,
+    lastEvents: result.latestEvents,
+    topicSummaries: [...previousContext.topicSummaries, result.topicSummary].slice(-3),
+  };
+
+  return {
+    characters: updated.characters.map((c: string) => c.substring(0, 100)),
+    locations: updated.locations.map((l: string) => l.substring(0, 100)),
+    unresolvedThreads: updated.unresolvedThreads.map((t: string) => t.substring(0, 200)),
+    lastEvents: updated.lastEvents.substring(0, 500),
+    topicSummaries: updated.topicSummaries.map((s: string) => s.substring(0, 200)),
+  };
+}
+
+// ============================================================================
+// 9. TOPIC EXPANSION (heavy) – with fallback
 // ============================================================================
 async function expandTopic(
   topic: any,
@@ -402,75 +630,92 @@ async function expandTopic(
     focusModeDirectives: string;
     safeHobbies: string;
     safeInterests: string;
+    storyContext: StoryContext;
   },
   userId: string
 ): Promise<any[]> {
-  const blocks = await withRetry(async () => {
+  const storySummary = `
+Story so far:
+- Characters: ${context.storyContext.characters.join(', ') || 'none yet'}
+- Locations: ${context.storyContext.locations.join(', ') || 'none yet'}
+- Unresolved threads: ${context.storyContext.unresolvedThreads.join(', ') || 'none'}
+- Last events: ${context.storyContext.lastEvents || 'story begins'}
+- Previous topics: ${context.storyContext.topicSummaries.join('; ') || 'none'}
+`;
+
+  const systemPrompt = `You are drafting Topic ${topic.topicNumber} of ${context.totalTopics} for Chapter ${context.chapterNumber}/${context.totalChapters}.
+                 
+📖 TOPIC: ${topic.topicTitle}
+📊 DIFFICULTY: ${context.difficultyLevel}
+🎭 UNIVERSE: ${context.randomTrope}
+🎨 TONE: ${context.randomTone}
+🌀 TWIST: ${context.randomTwist}
+${context.referenceContext}
+
+${storySummary}
+
+🎯 PEDAGOGICAL GOAL: ${topic.pedagogicalGoal}
+📝 NARRATIVE BEAT: ${topic.narrativeBeat}
+
+⚡ STRICT CONTENT REQUIREMENTS:
+1. ${context.focusModeDirectives}
+2. Generate 6-10 content blocks mixing different types:
+   - 2-3 STORY blocks (4-5 paragraphs each, highly engaging)
+   - 2-3 FACT blocks (key concepts with examples)
+   - 2 QUIZ blocks of varying types: single MCQ, multiple MCQ, true/false, or short answer
+   - 1-2 DEFINITION blocks (key terms)
+   - 1-2 IMAGE blocks (visual concepts with detailed prompts)
+   - 1 CODE block if applicable (with working examples)
+   - 1 SUMMARY block (key takeaways)
+3. Weave student's hobbies (${context.safeHobbies}) and interests (${context.safeInterests}) into stories and examples.
+4. For ${context.difficultyLevel} level: ${
+    context.difficultyLevel === 'beginner' 
+      ? 'Use simple analogies, step-by-step explanations, and relatable examples.' 
+      : context.difficultyLevel === 'intermediate' 
+      ? 'Include practical applications, case studies, and real-world examples.' 
+      : 'Include advanced theories, research papers, edge cases, and cutting-edge developments.'
+  }
+5. DO NOT repeat content from previous topics or chapters.
+6. Each story block MUST be 4-5 paragraphs minimum.
+7. For quizzes:
+   - Single MCQ: provide 4 options and one correct answer.
+   - Multiple MCQ: provide 4-5 options and 2-3 correct answers.
+   - True/False: provide options ["True","False"] and correctAnswer as "True" or "False".
+   - Short answer: provide correctAnswer and optional keywords.
+8. Image prompts must be highly descriptive for AI image generation.`;
+
+  const prompt = `Write deep, detailed content blocks for Topic ${topic.topicNumber}: "${topic.topicTitle}" of "${context.chapterTitle}".
+
+This is Chapter ${context.chapterNumber} of ${context.totalChapters}. Build upon previous knowledge and the ongoing story.
+
+Return ONLY valid JSON with a "blocks" array containing 6-10 content blocks.`;
+
+  const result = await callWithFallback(async (provider, model) => {
     const { object, usage } = await withTimeout(
       generateObject({
-        model: groq('llama-3.3-70b-versatile'),
-        providerOptions: {
+        model: provider === 'groq' ? groq(model) : google(model),
+        providerOptions: provider === 'groq' ? {
           groq: {
             structuredOutputs: false,
             response_format: { type: 'json_object' },
           },
-        },
-        system: `You are drafting Topic ${topic.topicNumber} of ${context.totalTopics} for Chapter ${context.chapterNumber}/${context.totalChapters}.
-                 
-                 📖 TOPIC: ${topic.topicTitle}
-                 📊 DIFFICULTY: ${context.difficultyLevel}
-                 🎭 UNIVERSE: ${context.randomTrope}
-                 🎨 TONE: ${context.randomTone}
-                 🌀 TWIST: ${context.randomTwist}
-                 ${context.referenceContext}
-                 
-                 🎯 PEDAGOGICAL GOAL: ${topic.pedagogicalGoal}
-                 📝 NARRATIVE BEAT: ${topic.narrativeBeat}
-                 
-                 ⚡ STRICT CONTENT REQUIREMENTS:
-                 1. ${context.focusModeDirectives}
-                 2. Generate 6-10 content blocks mixing different types:
-                    - 2-3 STORY blocks (4-5 paragraphs each, highly engaging)
-                    - 2-3 FACT blocks (key concepts with examples)
-                    - 2 QUIZ blocks of varying types: single MCQ, multiple MCQ, true/false, or short answer
-                    - 1-2 DEFINITION blocks (key terms)
-                    - 1-2 IMAGE blocks (visual concepts with detailed prompts)
-                    - 1 CODE block if applicable (with working examples)
-                    - 1 SUMMARY block (key takeaways)
-                 3. Weave student's hobbies (${context.safeHobbies}) and interests (${context.safeInterests}) into stories and examples.
-                 4. For ${context.difficultyLevel} level: ${
-                   context.difficultyLevel === 'beginner' 
-                     ? 'Use simple analogies, step-by-step explanations, and relatable examples.' 
-                     : context.difficultyLevel === 'intermediate' 
-                     ? 'Include practical applications, case studies, and real-world examples.' 
-                     : 'Include advanced theories, research papers, edge cases, and cutting-edge developments.'
-                 }
-                 5. DO NOT repeat content from previous topics or chapters.
-                 6. Each story block MUST be 4-5 paragraphs minimum.
-                 7. For quizzes:
-                    - Single MCQ: provide 4 options and one correct answer.
-                    - Multiple MCQ: provide 4-5 options and 2-3 correct answers.
-                    - True/False: provide options ["True","False"] and correctAnswer as "True" or "False".
-                    - Short answer: provide correctAnswer and optional keywords.
-                 8. Image prompts must be highly descriptive for AI image generation.`,
-        prompt: `Write deep, detailed content blocks for Topic ${topic.topicNumber}: "${topic.topicTitle}" of "${context.chapterTitle}".
-
-This is Chapter ${context.chapterNumber} of ${context.totalChapters}. Build upon previous knowledge progressively.
-
-Return ONLY valid JSON with a "blocks" array containing 6-10 content blocks.`,
+        } : undefined,
+        system: systemPrompt,
+        prompt,
         schema: TopicExpansionSchema,
         temperature: 0.75,
       }),
       60000
     );
     if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
-    return object.blocks;
-  }, 3, 3000);
-  return blocks;
+    return object;
+  }, 'heavy'); // heavy task
+
+  return result.blocks;
 }
 
 // ============================================================================
-// 8. THE MASTER TUTOR ENGINE
+// 10. THE MASTER TUTOR ENGINE (unchanged, but uses updated helpers)
 // ============================================================================
 export async function generateChapterContent(params: GenerateChapterParams) {
   const startTime = Date.now();
@@ -511,8 +756,12 @@ export async function generateChapterContent(params: GenerateChapterParams) {
     focusModeDirectives = `FOCUS MODE: EXTREME. Maximum academic rigor. INCLUDE the deep history of the concept, advanced edge-cases, and research paper references. This is ${difficultyLevel} level - push the boundaries.`;
   }
 
-  const safeHobbies = profile.hobbies?.length ? profile.hobbies.join(', ') : 'technology and adventure';
-  const safeInterests = profile.interests?.length ? profile.interests.join(', ') : 'general knowledge';
+  const safeHobbies = profile.hobbies?.length 
+    ? profile.hobbies.join(', ').substring(0, 200) 
+    : 'technology and adventure';
+  const safeInterests = profile.interests?.length 
+    ? profile.interests.join(', ').substring(0, 200) 
+    : 'general knowledge';
   
   const tropeIndex = chapterNumber % NARRATIVE_TROPES.length;
   const twistIndex = (chapterNumber + 3) % PLOT_TWISTS.length;
@@ -539,54 +788,28 @@ export async function generateChapterContent(params: GenerateChapterParams) {
     - ALWAYS cite which book a concept comes from when possible.`;
   }
 
-  const contextBlock = `
-    🎓 Student Profile:
-    - Grade/Class: ${profile.classLevel || 10}
-    - Age: ${profile.age || 'unknown'}
-    - Hobbies: ${safeHobbies}
-    - Interests: ${safeInterests}
-    - Learning Tempo: ${profile.learningTempo}
-    
-    📖 Chapter Context:
-    - Chapter: ${chapterNumber} of ${totalChapters} (${difficultyLevel} level)
-    - Topic: ${chapterTitle}
-    - Subject: ${subjectName}
-    - Previous: ${previousChapterTitle || 'START OF CURRICULUM'}
-    - Next: ${nextChapterTitle || 'END OF CURRICULUM'}
-    
-    🎭 Narrative Elements:
-    - Universe: "${randomTrope}"
-    - Tone: "${randomTone}"
-    - Twist: "${randomTwist}"
-    
-    ${focusModeDirectives}
-    ${referenceContext}
-    
-    ⚠️ IMPORTANT RULES:
-    1. This chapter must be UNIQUE and not repeat content from previous chapters.
-    2. Build upon prior knowledge progressively.
-    3. Weave student's hobbies (${safeHobbies}) and interests (${safeInterests}) into examples, analogies, and story characters.
-    4. Each topic should have 5-10 content blocks mixing stories, facts, quizzes, definitions, and images.
-    5. Stories must be LONG (4-5 paragraphs minimum) and highly engaging.
-    6. Include at least 2 quizzes per topic with detailed explanations. Use a mix of quiz types: single-answer MCQ, multiple-answer MCQ, true/false, and short answer.
-    7. Generate image prompts for visual concepts.
-  `;
+  const cacheKey = `chapter:${userId}:${subjectName}:${chapterNumber}`;
+  const cached = chapterCache.get(cacheKey);
+  const now = Date.now();
 
-  // ==========================================================================
-  // PHASE 1: CHAPTER BLUEPRINT (8B)
-  // ==========================================================================
-  console.log(`[Orchestrator] Phase 1: Creating chapter blueprint for "${chapterTitle}"...`);
-  const blueprint = await withRetry(async () => {
-    const { object, usage } = await withTimeout(
-      generateObject({
-        model: groq('llama-3.1-8b-instant'),
-        providerOptions: {
-          groq: {
-            structuredOutputs: false,
-            response_format: { type: 'json_object' },
-          },
-        },
-        system: `You are the EduBridge Master Architect. Your ONLY task is to create a high-level blueprint for Chapter ${chapterNumber} of ${totalChapters}. Do NOT generate any actual lesson content. Only output the blueprint structure.
+  // PHASE 1: CHAPTER BLUEPRINT (with cache)
+  let blueprint;
+  if (cached?.blueprint && cached.expiresAt > now) {
+    console.log(`[Orchestrator] Using cached blueprint for "${chapterTitle}"`);
+    blueprint = cached.blueprint;
+  } else {
+    console.log(`[Orchestrator] Phase 1: Creating chapter blueprint for "${chapterTitle}"...`);
+    blueprint = await callWithFallback(async (provider, model) => {
+      const { object, usage } = await withTimeout(
+        generateObject({
+          model: provider === 'groq' ? groq(model) : google(model),
+          providerOptions: provider === 'groq' ? {
+            groq: {
+              structuredOutputs: false,
+              response_format: { type: 'json_object' },
+            },
+          } : undefined,
+          system: `You are the EduBridge Master Architect. Your ONLY task is to create a high-level blueprint for Chapter ${chapterNumber} of ${totalChapters}. Do NOT generate any actual lesson content. Only output the blueprint structure.
 
 DIVIDE this chapter into 4-6 distinct TOPICS.
 
@@ -598,23 +821,46 @@ For each topic, provide:
 - "estimatedMinutes" (5-15)
 
 Return a JSON object with "topics" array and "totalEstimatedMinutes".`,
-        prompt: `Create a detailed topic blueprint for: ${chapterTitle} (${subjectName})
+          prompt: `Create a detailed topic blueprint for: ${chapterTitle} (${subjectName})
 
-${contextBlock}
+Student Profile:
+- Grade/Class: ${profile.classLevel || 10}
+- Hobbies: ${safeHobbies}
+- Interests: ${safeInterests}
+- Learning Tempo: ${profile.learningTempo}
+
+Reference Books: ${referenceBooks.join(', ')}
 
 Return ONLY valid JSON.`,
-        schema: ChapterBlueprintSchema,
-        temperature: 0.2,
-      }),
-      45000
-    );
-    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
-    return object;
-  });
+          schema: ChapterBlueprintSchema,
+          temperature: 0.2,
+        }),
+        45000
+      );
+      if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
+      return object;
+    }, 'light'); // blueprint is a lighter task
 
-  // ==========================================================================
-  // PHASE 2: TOPIC EXPANSION (SEQUENTIAL, 70B)
-  // ==========================================================================
+    if (!blueprint.topics || blueprint.topics.length === 0) {
+      throw new Error('Blueprint generation returned zero topics');
+    }
+
+    chapterCache.set(cacheKey, {
+      blueprint,
+      context: cached?.context,
+      expiresAt: now + CACHE_TTL,
+    });
+  }
+
+  // PHASE 2: TOPIC EXPANSION with narrative context
+  let storyContext: StoryContext = cached?.context || {
+    characters: [],
+    locations: [],
+    unresolvedThreads: [],
+    lastEvents: '',
+    topicSummaries: [],
+  };
+
   console.log(`[Orchestrator] Phase 2: Expanding ${blueprint.topics.length} topics for "${chapterTitle}" sequentially...`);
   let allBlocks: any[] = [];
   let successfulTopics = 0;
@@ -625,7 +871,7 @@ Return ONLY valid JSON.`,
         chapterNumber,
         totalChapters,
         chapterTitle,
-        totalTopics: blueprint.topics.length,  // pass total topics
+        totalTopics: blueprint.topics.length,
         difficultyLevel,
         randomTrope,
         randomTone,
@@ -634,9 +880,19 @@ Return ONLY valid JSON.`,
         focusModeDirectives,
         safeHobbies,
         safeInterests,
+        storyContext,
       }, userId);
+
       allBlocks.push(...blocks);
       successfulTopics++;
+
+      storyContext = await updateStoryContext(userId, storyContext, blocks, topic.topicTitle);
+      
+      chapterCache.set(cacheKey, {
+        blueprint,
+        context: storyContext,
+        expiresAt: now + CACHE_TTL,
+      });
     } catch (error) {
       console.error(`[Orchestrator] ⚠️ Topic ${topic.topicNumber} of "${chapterTitle}" failed after retries:`, error);
     }
@@ -646,9 +902,7 @@ Return ONLY valid JSON.`,
     throw new Error(`CRITICAL: Majority of topics failed for "${chapterTitle}". Aborting chapter generation.`);
   }
 
-  // ==========================================================================
   // PHASE 3: ASSEMBLY & IMAGE URLS
-  // ==========================================================================
   console.log(`[Orchestrator] Phase 3: Assembling ${allBlocks.length} blocks for "${chapterTitle}"...`);
   let finalBlocks = allBlocks.map((block) => {
     const finalBlock: any = {
@@ -683,6 +937,7 @@ Return ONLY valid JSON.`,
 
   const generationDuration = Date.now() - startTime;
   console.log(`[Orchestrator] ✅ Success! Generated ${finalBlocks.length} blocks for Chapter ${chapterNumber}: "${chapterTitle}" (took ${generationDuration}ms)`);
+  
   return { 
     blocks: finalBlocks,
     totalTopics: blueprint.topics.length,
@@ -691,37 +946,41 @@ Return ONLY valid JSON.`,
 }
 
 // ============================================================================
-// 9. EVALUATION ENGINE (8B)
+// 11. EVALUATION ENGINE – with fallback
 // ============================================================================
 export async function evaluateAnswer(
+  userId: string,
   question: { type: string; correctAnswer: string | string[]; keywords?: string[] },
   userAnswer: string,
   context: string
 ) {
-  return await withRetry(async () => {
-    const { object, usage } = await generateObject({
-      model: groq('llama-3.1-8b-instant'),
-      providerOptions: {
-        groq: {
-          structuredOutputs: false,
-          response_format: { type: 'json_object' },
-        },
-      },
-      system: `You are an expert grader. Provide a score (0-100), a boolean isCorrect, and detailed feedback. Return JSON.`,
-      prompt: `Evaluate this student answer.
-               Question Type: ${question.type}
-               Question: ${JSON.stringify(question)}
-               Lesson Context: ${context.slice(0, 20000)}
-               Student Answer: "${userAnswer}"
-               
-               Return a JSON object with fields: score, isCorrect, feedback.`,
-      schema: z.object({
-        score: z.number().min(0).max(100),
-        isCorrect: z.boolean(),
-        feedback: z.string(),
+  return await callWithFallback(async (provider, model) => {
+    const { object, usage } = await withTimeout(
+      generateObject({
+        model: provider === 'groq' ? groq(model) : google(model),
+        providerOptions: provider === 'groq' ? {
+          groq: {
+            structuredOutputs: false,
+            response_format: { type: 'json_object' },
+          },
+        } : undefined,
+        system: `You are an expert grader. Provide a score (0-100), a boolean isCorrect, and detailed feedback. Return JSON.`,
+        prompt: `Evaluate this student answer.
+                 Question Type: ${question.type}
+                 Question: ${JSON.stringify(question)}
+                 Lesson Context: ${context.slice(0, 20000)}
+                 Student Answer: "${userAnswer}"
+                 
+                 Return a JSON object with fields: score, isCorrect, feedback.`,
+        schema: z.object({
+          score: z.number().min(0).max(100),
+          isCorrect: z.boolean(),
+          feedback: z.string(),
+        }),
       }),
-    });
-    if (usage?.totalTokens) await recordTokenUsage('evaluateAnswer', usage.totalTokens);
+      45000
+    );
+    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
     return object;
-  }, 2, 1000);
+  }, 'light');
 }

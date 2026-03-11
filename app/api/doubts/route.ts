@@ -1,70 +1,83 @@
 // app/api/doubts/route.ts
 import { NextResponse } from 'next/server';
-import { streamText } from 'ai';
+import { generateText } from 'ai';
 import { groq } from '@ai-sdk/groq';
 import { prisma } from '@/lib/db/client';
 import { createServerSupabaseClient } from '@/lib/supabase/server';
-import { rateLimiters, checkRateLimit, getClientIdentifier } from '@/lib/rate-limit';
+import { rateLimiters, checkRateLimit, getClientIdentifier, recordTokenUsage } from '@/lib/rate-limit';
+import crypto from 'crypto';
 
 export const maxDuration = 60; // Vercel timeout
 
-// Free‑tier compatible model fallbacks
-const VISION_MODELS = ['llama-3.2-11b-vision-preview', 'llama-3.2-90b-vision-preview'] as const;
-const TEXT_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'] as const;
+const VISION_MODELS = ['llama-3.2-11b-vision-preview'] as const;
+const TEXT_MODELS = ['llama-3.1-8b-instant', 'llama-3.3-70b-versatile'] as const;
+
+function createLogger(requestId: string) {
+  return {
+    info: (message: string, data?: any) => {
+      console.log(`[${requestId}] [INFO] ${message}`, data ? JSON.stringify(data) : '');
+    },
+    warn: (message: string, data?: any) => {
+      console.warn(`[${requestId}] [WARN] ${message}`, data ? JSON.stringify(data) : '');
+    },
+    error: (message: string, error?: any) => {
+      console.error(`[${requestId}] [ERROR] ${message}`, error?.stack || error);
+    },
+  };
+}
 
 export async function POST(req: Request) {
-  console.log("\n==========================================");
-  console.log("🚀 [Doubts API] 1. INCOMING REQUEST RECEIVED");
   const requestId = crypto.randomUUID();
+  const logger = createLogger(requestId);
   const startTime = Date.now();
 
-  // CORS preflight
-  if (req.method === 'OPTIONS') {
-    return new NextResponse(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-      },
-    });
-  }
+  logger.info('🚀 Doubts API request started', { method: req.method });
 
   try {
-    // 1. Authenticate
-    console.log("🔐 [Doubts API] 1.1 Checking Auth...");
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    // --- CORS preflight (keep for safety) ---
+    if (req.method === 'OPTIONS') {
+      return new NextResponse(null, {
+        status: 204,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'POST',
+          'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+        },
+      });
+    }
 
-    if (!user) {
-      console.log("❌ [Doubts API] Auth Failed. No user found.");
+    // --- Authentication ---
+    const supabase = await createServerSupabaseClient();
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError || !user) {
+      logger.error('Authentication failed', authError);
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
-    console.log(`✅ [Doubts API] 1.2 User Authenticated: ${user.id}`);
+    logger.info('User authenticated', { userId: user.id });
 
-    // 2. Rate Limiting
-    const clientIp = getClientIdentifier(req);
+    // --- Rate Limiting ---
     const rateLimit = await checkRateLimit(rateLimiters.doubts, user.id);
-
     if (!rateLimit.success) {
-      console.log("❌ [Doubts API] Rate Limit Hit.");
-      return new Response('AI rate limit exceeded. Please try again in a few minutes.', { status: 429 });
+      logger.warn('Rate limit exceeded', { userId: user.id, reset: rateLimit.reset });
+      return NextResponse.json(
+        { error: 'Rate limit exceeded. Please try again later.' },
+        { status: 429, headers: { 'Retry-After': rateLimit.reset.toString() } }
+      );
     }
-    console.log("✅ [Doubts API] 2. Rate Limit Passed.");
+    logger.info('Rate limit passed');
 
-    // 3. Parse Request
+    // --- Parse Request ---
     const payload = await req.json();
-    console.log("✅ [Doubts API] 3. Payload Parsed. Keys:", Object.keys(payload));
-
-    const messages = payload.messages;
-    const chapterId = payload.data?.chapterId || payload.chapterId;
+    const { messages, chapterId, imageData } = payload; // imageData expected as base64 string
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
-      return new Response('Invalid or empty messages.', { status: 400 });
+      logger.error('Invalid messages payload', { messages });
+      return NextResponse.json({ error: 'Invalid or empty messages.' }, { status: 400 });
     }
+    logger.info('Payload parsed', { messageCount: messages.length, chapterId, hasImage: !!imageData });
 
-    // 4. Fetch Profile & Chapter Data (Parallel)
-    console.log("⏳ [Doubts API] 4. Fetching DB Context...");
+    // --- Fetch Profile & Chapter Data ---
+    logger.info('Fetching profile and chapter data from DB');
     const [profile, targetChapter] = await Promise.all([
       prisma.profile.findUnique({
         where: { userId: user.id },
@@ -73,7 +86,7 @@ export async function POST(req: Request) {
       chapterId
         ? prisma.chapter.findUnique({
             where: { id: chapterId },
-            include: { 
+            include: {
               subject: { select: { name: true } },
               progress: { where: { userId: user.id } }
             },
@@ -81,15 +94,14 @@ export async function POST(req: Request) {
         : prisma.chapter.findFirst({
             where: { subject: { curriculum: { userId: user.id } } },
             orderBy: { updatedAt: 'desc' },
-            include: { 
+            include: {
               subject: { select: { name: true } },
               progress: { where: { userId: user.id } }
             },
           })
     ]);
-    console.log("✅ [Doubts API] 4. DB Context Fetched.");
 
-    // 5. Build Context
+    // --- Build Context (same as before) ---
     let contextText = "No specific chapter context available.";
     let currentSubject = "General Studies";
     let chapterTitle = "General Chat";
@@ -119,7 +131,7 @@ export async function POST(req: Request) {
 
       if (targetChapter.mixedContent && Array.isArray(targetChapter.mixedContent)) {
         const blocks = targetChapter.mixedContent as any[];
-        const relevantBlocks = blocks.filter((b) => 
+        const relevantBlocks = blocks.filter((b) =>
           ['story', 'fact', 'definition', 'quiz', 'code'].includes(b.type)
         );
 
@@ -139,8 +151,9 @@ export async function POST(req: Request) {
         suggestedTopics = [...new Set([...definitions, ...examples])].slice(0, 5);
       }
     }
+    logger.info('Context built', { subject: currentSubject, chapter: chapterTitle, topicsCount: suggestedTopics.length });
 
-    // 6. Build System Prompt
+    // --- Build System Prompt ---
     const userGrade = profile?.classLevel ?? 'unknown';
     const vibe = profile?.currentVibe || 'standard';
 
@@ -160,33 +173,49 @@ GUIDELINES:
 - If a visual diagram helps, use exactly: [Image of X]. Example: [Image of mitochondria cell structure].
 ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this chapter. End your response with a brief, friendly tip to keep reading the chapter for more context.` : ''}`;
 
-    // 7. Determine if the last message contains an image
-    const lastMessage = messages[messages.length - 1];
-    const hasImage = !!(lastMessage?.experimental_attachments?.length > 0);
-
-    // 8. Fallback Loop for Groq (consistent with other APIs)
-    console.log(`🧠 [Doubts AI] 5. Routing to Groq. Has Image? ${hasImage}`);
+    // --- Determine Model ---
+    const hasImage = !!imageData;
     const modelList = hasImage ? VISION_MODELS : TEXT_MODELS;
-    let result: any;
+    logger.info(`Routing to Groq. Has image? ${hasImage}`, { models: modelList });
+
+    let result: Awaited<ReturnType<typeof generateText>> | null = null;
     let modelName: string = modelList[0];
     let lastError: any = null;
 
     for (const model of modelList) {
       try {
-        console.log(`   -> Attempting Model: ${model}`);
-        result = await streamText({
+        logger.info(`Attempting model: ${model}`);
+        // For image messages, we need to pass the image as a user message part.
+        // Since we're using generateText, we can construct the messages array with image content if needed.
+        const finalMessages = [...messages];
+        if (hasImage) {
+          // Replace the last user message with one that includes the image.
+          // The SDK supports `experimental_attachments`, but for generateText we can use a content array.
+          // We'll keep it simple: add the image URL to the message text.
+          // Alternatively, we could use the multi-modal format, but for now we'll assume the image is already in the last message content as a URL.
+          // Actually, the frontend sends imageData separately. We'll append it as a user message.
+          finalMessages.push({
+            role: 'user',
+            content: [
+              { type: 'text', text: messages[messages.length - 1]?.content || 'Please analyze this image.' },
+              { type: 'image_url', image_url: { url: imageData } }
+            ]
+          });
+        }
+
+        result = await generateText({
           model: groq(model),
           system: systemPrompt,
-          messages,
+          messages: finalMessages,
           temperature: 0.5,
-          maxOutputTokens: 1024, // ✅ use maxTokens for AI SDK v4
+          maxOutputTokens: 1024,
         });
         modelName = model;
-        console.log(`   -> ✅ Model ${model} connected successfully!`);
+        logger.info(`✅ Model ${model} succeeded`);
         break;
       } catch (err: any) {
         lastError = err;
-        console.warn(`   -> ❌ Model ${model} failed:`, err.message);
+        logger.warn(`❌ Model ${model} failed`, { error: err.message });
         continue;
       }
     }
@@ -195,38 +224,36 @@ ${chapterWarning ? `- The student has only finished ${chapterProgress}% of this 
       throw new Error(`All Groq models failed. Last error: ${lastError?.message}`);
     }
 
-    // 9. Create Streaming Response
-    console.log("⚡ [Doubts AI] 6. Creating Stream Response...");
-    const response = result.toTextStreamResponse();
-
-    // Set optimized headers
-    response.headers.set('X-Suggested-Topics', encodeURIComponent(JSON.stringify(suggestedTopics)));
-    response.headers.set('X-Chapter-Title', encodeURIComponent(chapterTitle));
-    response.headers.set('X-Subject', encodeURIComponent(currentSubject));
-    response.headers.set('X-Chapter-Warning', chapterWarning.toString());
-    response.headers.set('X-Chapter-Progress', chapterProgress.toString());
-    response.headers.set('X-Chapter-Status', chapterStatus);
-    response.headers.set('X-Request-ID', requestId);
-    response.headers.set('X-Model-Used', modelName);
-    response.headers.set('Access-Control-Allow-Origin', '*');
+    // --- Track token usage ---
+    if (result.usage?.totalTokens) {
+      await recordTokenUsage(user.id, result.usage.totalTokens);
+    }
 
     const duration = Date.now() - startTime;
-    console.log(`🎉 [Doubts AI] 7. STREAMING STARTED in ${duration}ms using ${modelName}`);
-    console.log("==========================================\n");
+    logger.info(`✅ Generation completed`, { durationMs: duration, modelUsed: modelName });
 
-    return response;
+    // --- Return JSON response with answer and metadata ---
+    return NextResponse.json({
+      success: true,
+      answer: result.text,
+      modelUsed: modelName,
+      chapterInfo: {
+        title: chapterTitle,
+        subject: currentSubject,
+        progress: chapterProgress,
+        status: chapterStatus,
+        warning: chapterWarning,
+      },
+      suggestedTopics,
+    });
 
   } catch (error: any) {
     const duration = Date.now() - startTime;
-    console.error(`❌ [Doubts API] FATAL ERROR | Duration: ${duration}ms`, error);
-    console.log("==========================================\n");
+    logger.error('Fatal error', error);
 
-    return new Response(
-      "I experienced a brief neural glitch. Could you please ask that again?",
-      {
-        status: 500,
-        headers: { 'Access-Control-Allow-Origin': '*' }
-      }
+    return NextResponse.json(
+      { error: 'Failed to process your question.', details: error.message },
+      { status: 500 }
     );
   }
 }

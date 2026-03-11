@@ -3,7 +3,6 @@
 import React from 'react';
 import { useState, useRef, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { useChat } from '@ai-sdk/react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useStore } from '@/store/useStore';
 import { Button } from '@/components/ui/button';
@@ -20,7 +19,7 @@ import remarkGfm from 'remark-gfm';
 import { THEME_CONFIG } from '@/lib/themes';
 
 // ============================================================================
-// TYPES - Simplified to avoid SDK type conflicts
+// TYPES
 // ============================================================================
 
 type ExtendedMessage = {
@@ -51,6 +50,20 @@ type ChapterInfo = {
   warning?: boolean;
 };
 
+type DoubtsApiResponse = {
+  success: boolean;
+  answer: string;
+  modelUsed: string;
+  chapterInfo?: {
+    title: string;
+    subject: string;
+    progress: number;
+    status: string;
+    warning: boolean;
+  };
+  suggestedTopics: string[];
+};
+
 const CATEGORY_COLORS: Record<string, string> = {
   concept: 'bg-violet-500/10 text-violet-600 border-violet-500/30 hover:bg-violet-500/20',
   practice: 'bg-cyan-500/10 text-cyan-600 border-cyan-500/30 hover:bg-cyan-500/20',
@@ -65,17 +78,6 @@ const CATEGORY_COLORS: Record<string, string> = {
 const safeDecode = (str: string | null | undefined): string | null => {
   if (!str) return null;
   try { return decodeURIComponent(str); } catch { return str; }
-};
-
-// Safe message content extractor - handles SDK type variations
-const getMessageContent = (msg: any): string => {
-  if (typeof msg === 'string') return msg;
-  if (msg?.content) return typeof msg.content === 'string' ? msg.content : '';
-  if (msg?.parts?.[0]?.text) return msg.parts[0].text;
-  if (Array.isArray(msg?.content)) {
-    return msg.content.map((p: any) => p.text || '').filter(Boolean).join(' ');
-  }
-  return '';
 };
 
 // ============================================================================
@@ -190,11 +192,11 @@ const ChapterStatusBadge = ({ chapter, theme }: { chapter: ChapterInfo | null; t
 };
 
 // ============================================================================
-// CHAT CONTENT COMPONENT
+// CHAT CONTENT COMPONENT (Custom fetch, no useChat)
 // ============================================================================
 
 function DoubtsContent() {
-  const searchParams = useSearchParams(); // ✅ ADDED the Next.js Hook
+  const searchParams = useSearchParams();
   const router = useRouter();
   const { user } = useStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -212,10 +214,19 @@ function DoubtsContent() {
   const [latestWarning, setLatestWarning] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [isStreaming, setIsStreaming] = useState(false);
-  
+  const [isLoading, setIsLoading] = useState(false); // replaces isStreaming
+
   const [activeTheme, setActiveTheme] = useState(THEME_CONFIG['minimalist']);
-  
+  const [suggestedPrompts, setSuggestedPrompts] = useState<SuggestedPrompt[]>([
+    { id: '1', text: 'Explain the main concept', icon: Lightbulb, category: 'concept' },
+    { id: '2', text: 'Give me a practice problem', icon: Zap, category: 'practice' },
+    { id: '3', text: 'I did not understand this part', icon: BookOpen, category: 'clarify' },
+    { id: '4', text: 'Tell me a real-world example', icon: Sparkles, category: 'expand' },
+  ]);
+
+  // ----------------------------------------------------------------------------
+  // Mount & Theme
+  // ----------------------------------------------------------------------------
   useEffect(() => {
     setIsMounted(true);
     if (typeof window !== 'undefined') {
@@ -226,82 +237,9 @@ function DoubtsContent() {
     }
   }, []);
 
-  const [suggestedPrompts, setSuggestedPrompts] = useState<SuggestedPrompt[]>([
-    { id: '1', text: 'Explain the main concept', icon: Lightbulb, category: 'concept' },
-    { id: '2', text: 'Give me a practice problem', icon: Zap, category: 'practice' },
-    { id: '3', text: 'I did not understand this part', icon: BookOpen, category: 'clarify' },
-    { id: '4', text: 'Tell me a real-world example', icon: Sparkles, category: 'expand' },
-  ]);
-
-  // ============================================================================
-  // VERCEL AI SDK HOOK - Using minimal config to avoid type issues
-  // ============================================================================
-  const chatHook = useChat({
-    api: '/api/doubts',
-    body: { chapterId, imageData: selectedImage },
-    onResponse: (response: Response) => {
-      try {
-        const rawSuggested = safeDecode(response.headers.get('X-Suggested-Topics'));
-        const rawTitle = safeDecode(response.headers.get('X-Chapter-Title'));
-        const rawSubject = safeDecode(response.headers.get('X-Subject'));
-        
-        const chapterWarning = response.headers.get('X-Chapter-Warning') === 'true';
-        const chapterProgress = response.headers.get('X-Chapter-Progress');
-        const chapterStatus = response.headers.get('X-Chapter-Status');
-
-        if (rawSuggested) {
-          try {
-            const topics = JSON.parse(rawSuggested);
-            if (Array.isArray(topics)) {
-              setSuggestedPrompts(topics.map((t: string, i: number) => ({
-                id: `suggested-${i}`, text: t, icon: [Lightbulb, BookOpen, Zap, Sparkles, Brain][i % 5], category: ['concept', 'clarify', 'practice', 'expand', 'chapter'][i % 5] as any,
-              })));
-            }
-          } catch (e) { console.warn("Failed parsing topics", e) }
-        }
-
-        if (rawTitle || rawSubject) {
-          setChapterInfo((prev) => (prev ? { 
-            ...prev, 
-            title: rawTitle || prev.title, 
-            subject: rawSubject || prev.subject, 
-            warning: chapterWarning, 
-            progress: chapterProgress ? parseInt(chapterProgress) : prev.progress, 
-            status: (chapterStatus as any) || prev.status
-          } : null));
-        }
-
-        setLatestWarning(chapterWarning);
-        setShowWelcome(false);
-      } catch (err) {
-        console.error("Error processing stream headers:", err);
-      }
-    },
-    onError: (error: Error) => {
-      console.error('Chat error:', error);
-      setIsStreaming(false);
-      setExtendedMessages(prev => [...prev, {
-        id: `error-${Date.now()}`,
-        role: 'assistant',
-        content: 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date(),
-      }]);
-    },
-    onFinish: () => {
-      setIsStreaming(false);
-    },
-  } as any); // ✅ Cast to any to bypass strict typing
-
-  // Extract hook properties safely
-  const sdkMessages = (chatHook as any).messages || [];
-  const sdkSetMessages = (chatHook as any).setMessages || (() => {});
-  const sdkAppend = (chatHook as any).append || (async () => {});
-  const sdkIsLoading = (chatHook as any).isLoading || (chatHook as any).streaming || false;
-  const sdkStop = (chatHook as any).stop || (() => {});
-
-  // ============================================================================
-  // FETCH CHAPTER INFO
-  // ============================================================================
+  // ----------------------------------------------------------------------------
+  // Fetch Chapter Info from URL
+  // ----------------------------------------------------------------------------
   useEffect(() => {
     const fetchChapterInfo = async () => {
       const chapter = searchParams.get('chapter');
@@ -314,7 +252,12 @@ function DoubtsContent() {
             const progress = data.chapter.userProgress;
             const isCompleted = data.chapter.status === 'COMPLETED' || progress?.completedAt !== null;
             setChapterInfo({
-              id: chapter, title: data.chapter.title, subject: data.chapter.subject?.name || 'General', status: data.chapter.status, progress: isCompleted ? 100 : progress?.masteryLevel ? Math.round(progress.masteryLevel) : 0, isCompleted,
+              id: chapter,
+              title: data.chapter.title,
+              subject: data.chapter.subject?.name || 'General',
+              status: data.chapter.status,
+              progress: isCompleted ? 100 : progress?.masteryLevel ? Math.round(progress.masteryLevel) : 0,
+              isCompleted,
             });
             if (data.profile?.currentVibe && THEME_CONFIG[data.profile.currentVibe]) {
               setActiveTheme(THEME_CONFIG[data.profile.currentVibe]);
@@ -328,41 +271,16 @@ function DoubtsContent() {
     fetchChapterInfo();
   }, [searchParams]);
 
-  // Sync extended messages with AI SDK messages
-  useEffect(() => {
-    setExtendedMessages((prev) => {
-      const existingMap = new Map(prev.map(m => [m.id, m]));
-      
-      return (sdkMessages as any[]).map((msg: any) => {
-        const existing = existingMap.get(msg.id);
-        const content = getMessageContent(msg);
-        
-        if (existing) {
-          return { ...existing, content };
-        }
-        
-        return { 
-          id: msg.id, 
-          role: (msg.role || 'assistant') as 'user' | 'assistant', 
-          content,
-          timestamp: new Date(), 
-          isLiked: false, 
-          isDisliked: false,
-          chapterWarning: msg.role === 'assistant' ? latestWarning : false
-        } as ExtendedMessage;
-      });
-    });
-  }, [sdkMessages, latestWarning]);
-
-  // Update streaming state
-  useEffect(() => {
-    setIsStreaming(sdkIsLoading);
-  }, [sdkIsLoading]);
-
+  // ----------------------------------------------------------------------------
+  // Auto-scroll
+  // ----------------------------------------------------------------------------
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [extendedMessages, isStreaming]);
+  }, [extendedMessages, isLoading]);
 
+  // ----------------------------------------------------------------------------
+  // Auto-resize textarea
+  // ----------------------------------------------------------------------------
   useEffect(() => {
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -370,9 +288,100 @@ function DoubtsContent() {
     }
   }, [inputValue]);
 
-  // ============================================================================
-  // HANDLERS
-  // ============================================================================
+  // ----------------------------------------------------------------------------
+  // Send Message (Custom Fetch)
+  // ----------------------------------------------------------------------------
+  const sendMessage = useCallback(async (text: string, image?: string | null) => {
+    if (!text.trim() && !image) return;
+
+    // Create user message
+    const userMessage: ExtendedMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content: text.trim() || "Please analyze this image and explain it to me.",
+      image: image || undefined,
+      timestamp: new Date(),
+    };
+
+    // Add to UI immediately
+    setExtendedMessages(prev => [...prev, userMessage]);
+    setShowWelcome(false);
+    setIsLoading(true);
+
+    // Clear input and image
+    setInputValue('');
+    if (image) {
+      removeImage();
+    }
+
+    try {
+      const res = await fetch('/api/doubts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          messages: [{ role: 'user', content: text }],
+          chapterId: chapterId || '',
+          imageData: image || '',
+        }),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || 'Failed to get response');
+      }
+
+      const data: DoubtsApiResponse = await res.json();
+
+      // Add assistant message
+      const assistantMessage: ExtendedMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data.answer,
+        timestamp: new Date(),
+        chapterWarning: data.chapterInfo?.warning,
+      };
+      setExtendedMessages(prev => [...prev, assistantMessage]);
+
+      // Update chapter info if provided
+      if (data.chapterInfo) {
+        setChapterInfo(prev => ({
+          id: prev?.id || '',
+          title: data.chapterInfo?.title || prev?.title || '',
+          subject: data.chapterInfo?.subject || prev?.subject || '',
+          progress: data.chapterInfo?.progress ?? prev?.progress ?? 0,
+          status: (data.chapterInfo?.status as any) || prev?.status || 'PENDING',
+          isCompleted: prev?.isCompleted || false,
+          warning: data.chapterInfo?.warning,
+        }));
+        setLatestWarning(data.chapterInfo.warning);
+      }
+
+      // Update suggested topics
+      if (data.suggestedTopics && data.suggestedTopics.length > 0) {
+        setSuggestedPrompts(data.suggestedTopics.map((t: string, i: number) => ({
+          id: `suggested-${i}`,
+          text: t,
+          icon: [Lightbulb, BookOpen, Zap, Sparkles, Brain][i % 5],
+          category: ['concept', 'clarify', 'practice', 'expand', 'chapter'][i % 5] as any,
+        })));
+      }
+
+    } catch (error) {
+      console.error('Send message error:', error);
+      setExtendedMessages(prev => [...prev, {
+        id: `error-${Date.now()}`,
+        role: 'assistant',
+        content: 'Sorry, I encountered an error. Please try again.',
+        timestamp: new Date(),
+      }]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [chapterId]);
+
+  // ----------------------------------------------------------------------------
+  // Image handling
+  // ----------------------------------------------------------------------------
   const handleImageSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -386,131 +395,87 @@ function DoubtsContent() {
     }
 
     const reader = new FileReader();
-    reader.onloadend = () => { 
-      setSelectedImage(reader.result as string); 
-      setSelectedImageName(file.name); 
+    reader.onloadend = () => {
+      setSelectedImage(reader.result as string);
+      setSelectedImageName(file.name);
     };
     reader.readAsDataURL(file);
   }, []);
 
   const removeImage = useCallback(() => {
-    setSelectedImage(null); 
+    setSelectedImage(null);
     setSelectedImageName('');
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, []);
 
-  const handleSuggestedPrompt = useCallback(async (prompt: string) => {
-    setShowWelcome(false);
-    setIsStreaming(true);
-    await sdkAppend({ 
-      role: 'user', 
-      content: prompt,
-    });
-    if (selectedImage) removeImage();
-  }, [sdkAppend, selectedImage, removeImage]);
+  // ----------------------------------------------------------------------------
+  // Handlers for prompts, submit, etc.
+  // ----------------------------------------------------------------------------
+  const handleSuggestedPrompt = useCallback((prompt: string) => {
+    sendMessage(prompt, selectedImage);
+  }, [sendMessage, selectedImage]);
 
   const startChatting = useCallback(() => {
-    setShowWelcome(false); 
+    setShowWelcome(false);
     setTimeout(() => textareaRef.current?.focus(), 100);
   }, []);
 
   const handleCopyMessage = useCallback((content: string, id: string) => {
-    navigator.clipboard.writeText(content); 
-    setCopiedId(id); 
+    navigator.clipboard.writeText(content);
+    setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
   }, []);
 
   const handleFeedback = useCallback(async (messageId: string, type: 'like' | 'dislike') => {
-    setExtendedMessages(prev => prev.map(msg => 
-      msg.id === messageId ? { 
-        ...msg, 
-        isLiked: type === 'like' ? !msg.isLiked : false, 
-        isDisliked: type === 'dislike' ? !msg.isDisliked : false 
+    setExtendedMessages(prev => prev.map(msg =>
+      msg.id === messageId ? {
+        ...msg,
+        isLiked: type === 'like' ? !msg.isLiked : false,
+        isDisliked: type === 'dislike' ? !msg.isDisliked : false
       } : msg
     ));
-    
+
     try {
-      await fetch('/api/doubts/feedback', { 
-        method: 'POST', 
+      await fetch('/api/doubts/feedback', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messageId, type }) 
+        body: JSON.stringify({ messageId, type })
       });
     } catch (error) {
       console.error('Failed to submit feedback:', error);
     }
   }, []);
 
-  const clearChat = useCallback(() => { 
-    sdkSetMessages([]); 
-    setExtendedMessages([]); 
-    setShowWelcome(true); 
+  const clearChat = useCallback(() => {
+    setExtendedMessages([]);
+    setShowWelcome(true);
     setInputValue('');
-    setIsStreaming(false);
-  }, [sdkSetMessages]);
+    setIsLoading(false);
+  }, []);
 
   const toggleFullscreen = useCallback(() => {
-    if (!document.fullscreenElement) { 
-      document.documentElement.requestFullscreen(); 
-      setIsFullscreen(true); 
-    } else { 
-      document.exitFullscreen(); 
-      setIsFullscreen(false); 
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen();
+      setIsFullscreen(true);
+    } else {
+      document.exitFullscreen();
+      setIsFullscreen(false);
     }
   }, []);
 
-  const handleSubmitWithImage = useCallback(async (e: React.FormEvent) => {
+  const handleSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputValue.trim() && !selectedImage) return;
-
-    setShowWelcome(false);
-    setIsStreaming(true);
-    
-    const imageToSend = selectedImage;
-    const textToSend = inputValue.trim() || "Please analyze this image and explain it to me.";
-    
-    // 1. Update Custom UI instantly
-    const userMessage: ExtendedMessage = {
-      id: `user-${Date.now()}`,
-      role: 'user',
-      content: textToSend,
-      image: imageToSend || undefined,
-      timestamp: new Date(),
-    };
-    setExtendedMessages(prev => [...prev, userMessage]);
-    
-    // 2. Clear inputs immediately for good UX
-    setInputValue('');
-    removeImage();
-    
-    // 3. Submit to Vercel AI SDK with EXPLICIT data payload
-    try {
-      await sdkAppend(
-        {
-          role: 'user',
-          content: textToSend,
-        },
-        {
-          // This ensures the backend `req.json().data.imageData` grabs it!
-          data: {
-            chapterId: chapterId || '',
-            imageData: imageToSend || ''
-          }
-        }
-      );
-    } catch (err) {
-      console.error("Failed to send message:", err);
-      setIsStreaming(false);
-    }
-  }, [inputValue, selectedImage, sdkAppend, removeImage, chapterId]);
+    sendMessage(inputValue, selectedImage);
+  }, [inputValue, selectedImage, sendMessage]);
 
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (inputValue.trim() || selectedImage) {
-        handleSubmitWithImage({ preventDefault: () => {} } as React.FormEvent);
+        handleSubmit(e as any);
       }
     }
-  }, [inputValue, selectedImage, handleSubmitWithImage]);
+  }, [inputValue, selectedImage, handleSubmit]);
 
   const t = activeTheme;
 
@@ -526,6 +491,7 @@ function DoubtsContent() {
   }
 
   if (showWelcome && extendedMessages.length === 0) {
+    // Welcome screen (unchanged)
     return (
       <div className={`min-h-screen ${t.bg} ${t.text} flex flex-col items-center justify-center p-4 relative overflow-hidden`}>
         <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: `linear-gradient(${t.text.replace('text-', 'text-')} 1px, transparent 1px), linear-gradient(90deg, ${t.text.replace('text-', 'text-')} 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
@@ -576,6 +542,7 @@ function DoubtsContent() {
     );
   }
 
+  // Chat UI
   return (
     <div className={`min-h-screen ${t.bg} ${t.text} flex flex-col relative overflow-hidden ${isFullscreen ? 'fixed inset-0 z-50' : ''}`}>
       <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: `linear-gradient(${t.text.replace('text-', 'text-')} 1px, transparent 1px), linear-gradient(90deg, ${t.text.replace('text-', 'text-')} 1px, transparent 1px)`, backgroundSize: '40px 40px' }} />
@@ -618,7 +585,7 @@ function DoubtsContent() {
             ))}
           </AnimatePresence>
 
-          {isStreaming && (
+          {isLoading && (
             <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} className="flex gap-4">
               <div className={`w-10 h-10 rounded-xl bg-gradient-to-br ${t.gradient} flex items-center justify-center shadow-lg`}>
                 <Bot className="w-5 h-5 text-white" />
@@ -658,24 +625,24 @@ function DoubtsContent() {
             )}
           </AnimatePresence>
 
-          <form onSubmit={handleSubmitWithImage} className="flex items-end gap-3">
+          <form onSubmit={handleSubmit} className="flex items-end gap-3">
             <div className="flex-1 relative">
               <div className={`flex items-end gap-2 ${t.card} ${t.border} border rounded-2xl p-2 shadow-xl`}>
                 <Button type="button" variant="ghost" size="sm" className={`h-10 w-10 rounded-xl ${t.muted} hover:${t.accent} hover:${t.accentLight} transition-colors`} onClick={() => fileInputRef.current?.click()}>
                   <Paperclip className="w-5 h-5" />
                 </Button>
                 <textarea
-                  ref={textareaRef} 
-                  value={inputValue} 
+                  ref={textareaRef}
+                  value={inputValue}
                   onChange={(e) => setInputValue(e.target.value)}
                   onKeyDown={handleKeyDown}
                   placeholder="Ask anything about your chapter..."
                   className={`flex-1 bg-transparent ${t.text} placeholder:${t.muted} resize-none outline-none py-3 px-2 max-h-[200px] min-h-[44px]`}
                   rows={1}
                 />
-                {isStreaming ? (
-                  <Button type="button" size="sm" variant="ghost" onClick={sdkStop} className={`h-10 w-10 rounded-xl bg-red-500/20 text-red-500 hover:bg-red-500/30 transition-colors`}>
-                    <StopCircle className="w-5 h-5" />
+                {isLoading ? (
+                  <Button type="button" size="sm" variant="ghost" disabled className={`h-10 w-10 rounded-xl bg-red-500/20 text-red-500 cursor-not-allowed`}>
+                    <Loader2 className="w-5 h-5 animate-spin" />
                   </Button>
                 ) : (
                   <Button type="submit" size="sm" disabled={!inputValue.trim() && !selectedImage} className={`h-10 w-10 rounded-xl bg-gradient-to-r ${t.gradient} text-white hover:shadow-lg disabled:opacity-50 transition-all`}>
@@ -701,7 +668,7 @@ function DoubtsContent() {
 }
 
 // ============================================================================
-// ERROR BOUNDARY COMPONENT
+// ERROR BOUNDARY
 // ============================================================================
 
 class ErrorBoundary extends React.Component<
@@ -725,13 +692,12 @@ class ErrorBoundary extends React.Component<
     if (this.state.hasError) {
       return this.props.fallback;
     }
-
     return this.props.children;
   }
 }
 
 // ============================================================================
-// MAIN PAGE COMPONENT
+// MAIN PAGE
 // ============================================================================
 
 export default function DoubtsPage() {
@@ -754,7 +720,7 @@ export default function DoubtsPage() {
           <p className="mt-4 text-sm text-slate-500 font-medium tracking-wide">Loading chat...</p>
         </div>
       }>
-        <DoubtsContent/>
+        <DoubtsContent />
       </Suspense>
     </ErrorBoundary>
   );

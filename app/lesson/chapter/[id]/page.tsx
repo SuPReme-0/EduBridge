@@ -3,7 +3,7 @@
 import { THEME_CONFIG, type ThemeConfig } from '@/lib/themes';
 import { use, useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { motion, AnimatePresence, useScroll, useTransform, useSpring, useMotionValue, useMotionTemplate } from 'motion/react';
+import { motion, AnimatePresence, useScroll, useTransform, useSpring, useMotionValue, useMotionTemplate, useAnimation } from 'motion/react';
 import {
   ArrowLeft, Loader2, Sparkles, Brain, CheckCircle2, XCircle, ChevronRight, BookOpen,
   Hexagon, Network, Bookmark, BookmarkCheck, Volume2, VolumeX, PenLine, Star, Trophy,
@@ -68,7 +68,7 @@ type Bookmark = { id: string; blockId: string; label?: string; createdAt: string
 type QuizState = { selected: string | string[]; isCorrect: boolean; timestamp: number; timeTaken: number };
 
 // ============================================================================
-// ✅ FIX #1: COLOR UTILS - Convert Tailwind classes to CSS values
+// COLOR UTILS - Convert Tailwind classes to CSS values
 // ============================================================================
 const getColorValue = (colorClass: string | undefined, isLight: boolean): string => {
   if (!colorClass) return isLight ? 'rgba(99, 102, 241, 0.15)' : 'rgba(99, 102, 241, 0.25)';
@@ -97,7 +97,7 @@ const getColorValue = (colorClass: string | undefined, isLight: boolean): string
 };
 
 // ============================================================================
-// ✅ FIX #2: PARTICLE FIELD - Hydration-safe with style OBJECT
+// PARTICLE FIELD - Futuristic animated background
 // ============================================================================
 const ParticleField = ({ theme, count = 20 }: { theme: ThemeConfig; count?: number }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -121,7 +121,6 @@ const ParticleField = ({ theme, count = 20 }: { theme: ThemeConfig; count?: numb
 const InteractiveParticle = ({ index, theme, mousePos }: {
   index: number; theme: ThemeConfig; mousePos: ReturnType<typeof useMotionValue<{ x: number; y: number }>>;
 }) => {
-  // ✅ Hydration-safe: generate random values on client only
   const [initialX] = useState(() => Math.random() * 100);
   const [initialY] = useState(() => Math.random() * 100);
   const [initialSize] = useState(() => 2 + Math.random() * 4);
@@ -160,10 +159,8 @@ const InteractiveParticle = ({ index, theme, mousePos }: {
     return () => clearInterval(interval);
   }, [index, x, y]);
 
-  // ✅ Convert theme classes to actual CSS color values
   const bgColor = getColorValue(theme.blob1 || theme.accentLight, theme.isLight);
 
-  // ✅ FIX: Use style OBJECT instead of useMotionTemplate string
   return (
     <motion.div
       style={{
@@ -183,7 +180,7 @@ const InteractiveParticle = ({ index, theme, mousePos }: {
 };
 
 // ============================================================================
-// HOLOGRAPHIC CARD (Theme-aware 3D effect with proper CSS)
+// HOLOGRAPHIC CARD (Theme-aware 3D effect)
 // ============================================================================
 const HolographicCard = ({ children, theme, className = '' }: {
   children: React.ReactNode; theme: ThemeConfig; className?: string;
@@ -231,7 +228,7 @@ const HolographicCard = ({ children, theme, className = '' }: {
 };
 
 // ============================================================================
-// CONFETTI (Hydration-safe celebration)
+// CONFETTI (Enhanced celebration)
 // ============================================================================
 const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) => {
   const [dimensions, setDimensions] = useState({ width: 1000, height: 800 });
@@ -248,7 +245,7 @@ const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) =>
   
   return (
     <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden">
-      {[...Array(50)].map((_, i) => {
+      {[...Array(80)].map((_, i) => {
         const randomX = Math.random() * dimensions.width;
         const randomY = dimensions.height + 100;
         const randomScale = Math.random() * 1 + 0.5;
@@ -256,15 +253,19 @@ const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) =>
         const randomDuration = Math.random() * 2 + 2;
         const randomDelay = Math.random() * 0.5;
         
-        const colors = [theme.accentBg, 'bg-yellow-400', 'bg-green-400'];
+        // More varied colors
+        const colors = [
+          theme.accentBg, 'bg-yellow-400', 'bg-green-400', 'bg-pink-400', 'bg-cyan-400'
+        ];
         
         return (
           <motion.div
             key={i}
             initial={{ y: -20, x: randomX, rotate: 0, scale: 0 }}
             animate={{ y: randomY, rotate: randomRotate, scale: randomScale }}
-            transition={{ duration: randomDuration, delay: randomDelay, ease: "linear" }}
-            className={`absolute w-3 h-3 rounded-sm ${colors[i % 3]}`}
+            transition={{ duration: randomDuration, delay: randomDelay, ease: "easeOut" }}
+            className={`absolute w-3 h-3 rounded-sm ${colors[i % colors.length]}`}
+            style={{ filter: 'blur(0.5px)' }}
           />
         );
       })}
@@ -273,20 +274,32 @@ const Confetti = ({ active, theme }: { active: boolean; theme: ThemeConfig }) =>
 };
 
 // ============================================================================
-// FLOATING ACTION BUTTON
+// FLOATING ACTION BUTTON (Enhanced)
 // ============================================================================
 const FloatingActionButton = ({ icon: Icon, onClick, label, theme, active = false, badge }: {
   icon: any; onClick: () => void; label: string; theme: ThemeConfig; active?: boolean; badge?: number;
 }) => (
-  <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={onClick}
-    className={`relative group flex items-center justify-center w-10 h-10 rounded-full ${theme.card} border ${theme.border} shadow-lg transition-all`}>
-    <Icon className={`w-4 h-4 ${active ? theme.accent : theme.muted}`} />
+  <motion.button
+    whileHover={{ scale: 1.1, y: -2 }}
+    whileTap={{ scale: 0.95 }}
+    onClick={onClick}
+    className={`relative group flex items-center justify-center w-12 h-12 rounded-2xl backdrop-blur-md border transition-all duration-300 shadow-xl
+      ${active 
+        ? `${theme.accentBg} text-white border-${theme.accent} shadow-${theme.accent}/50` 
+        : `${theme.card} ${theme.border} hover:${theme.accentLight}`}
+    `}
+  >
+    <Icon className={`w-5 h-5 ${active ? 'text-white' : theme.muted}`} />
     {badge && badge > 0 && (
-      <span className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+      <motion.span
+        initial={{ scale: 0 }}
+        animate={{ scale: 1 }}
+        className="absolute -top-2 -right-2 w-5 h-5 bg-red-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center border-2 border-white dark:border-slate-900"
+      >
         {badge > 9 ? '9+' : badge}
-      </span>
+      </motion.span>
     )}
-    <span className={`absolute -top-8 left-1/2 -translate-x-1/2 px-2 py-1 ${theme.card} border ${theme.border} rounded-lg text-[10px] font-bold whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity shadow-lg`}>
+    <span className={`absolute -top-10 left-1/2 -translate-x-1/2 px-3 py-1.5 ${theme.card} border ${theme.border} rounded-xl text-xs font-bold whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity shadow-xl backdrop-blur-md pointer-events-none z-50`}>
       {label}
     </span>
   </motion.button>
@@ -301,7 +314,10 @@ const ReadingProgress = ({ progress, theme }: { progress: number; theme: ThemeCo
   
   return (
     <div className="fixed top-0 left-0 right-0 h-1.5 z-50 bg-slate-200/20 backdrop-blur-sm">
-      <motion.div style={{ width: springProgress, backgroundColor: progressBarColor }} className="h-full transition-colors shadow-[0_0_10px_rgba(99,102,241,0.5)]" />
+      <motion.div
+        style={{ width: springProgress, backgroundColor: progressBarColor }}
+        className="h-full transition-colors shadow-[0_0_10px_rgba(99,102,241,0.5)]"
+      />
     </div>
   );
 };
@@ -312,16 +328,20 @@ const ReadingProgress = ({ progress, theme }: { progress: number; theme: ThemeCo
 const StreakBadge = ({ streak, theme }: { streak: number; theme: ThemeConfig }) => {
   if (streak < 2) return null;
   return (
-    <motion.div initial={{ scale: 0, rotate: -10 }} animate={{ scale: 1, rotate: 0 }}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full ${theme.accentLight} border ${theme.borderAccent || theme.border}`}>
-      <Flame className={`w-4 h-4 ${theme.accent} animate-pulse`} />
+    <motion.div
+      initial={{ scale: 0, rotate: -10 }}
+      animate={{ scale: 1, rotate: 0 }}
+      transition={{ type: "spring", stiffness: 260, damping: 20 }}
+      className={`flex items-center gap-1.5 px-4 py-2 rounded-full ${theme.accentLight} border ${theme.borderAccent || theme.border} shadow-lg backdrop-blur-sm`}
+    >
+      <Flame className={`w-5 h-5 ${theme.accent} animate-pulse`} />
       <span className={`text-xs font-bold ${theme.accent}`}>{streak} day streak!</span>
     </motion.div>
   );
 };
 
 // ============================================================================
-// BLOCK TYPE ICON
+// BLOCK TYPE ICON (Enhanced)
 // ============================================================================
 const BlockTypeIcon = ({ type, theme }: { type: string; theme: ThemeConfig }) => {
   const icons: Record<string, any> = {
@@ -330,9 +350,12 @@ const BlockTypeIcon = ({ type, theme }: { type: string; theme: ThemeConfig }) =>
   };
   const Icon = icons[type] || BookOpen;
   return (
-    <div className={`w-8 h-8 rounded-lg ${theme.accentLight} ${theme.accent} flex items-center justify-center border ${theme.border}`}>
-      <Icon className="w-4 h-4" />
-    </div>
+    <motion.div
+      whileHover={{ scale: 1.1, rotate: 5 }}
+      className={`w-10 h-10 rounded-xl ${theme.accentLight} ${theme.accent} flex items-center justify-center border ${theme.border} shadow-lg`}
+    >
+      <Icon className="w-5 h-5" />
+    </motion.div>
   );
 };
 
@@ -348,67 +371,110 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
   
   return (
     <div className={`fixed inset-0 z-50 ${theme.bg} flex flex-col items-center justify-center overflow-hidden`}>
-      <ParticleField theme={theme} count={30} />
+      <ParticleField theme={theme} count={40} />
       
-      <motion.div animate={{ scale: [1, 1.2, 1], opacity: [0.1, 0.25, 0.1] }} transition={{ duration: 8, repeat: Infinity }}
+      <motion.div
+        animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.3, 0.1] }}
+        transition={{ duration: 8, repeat: Infinity }}
         className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full blur-[150px] mix-blend-screen"
-        style={{ backgroundColor: glowColor1 }} />
-      <motion.div animate={{ scale: [1.1, 1, 1.1], opacity: [0.15, 0.1, 0.15] }} transition={{ duration: 10, repeat: Infinity, delay: 2 }}
+        style={{ backgroundColor: glowColor1 }}
+      />
+      <motion.div
+        animate={{ scale: [1.2, 1, 1.2], opacity: [0.2, 0.1, 0.2] }}
+        transition={{ duration: 10, repeat: Infinity, delay: 2 }}
         className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full blur-[120px] mix-blend-screen"
-        style={{ backgroundColor: glowColor2 }} />
+        style={{ backgroundColor: glowColor2 }}
+      />
       
       <div className="absolute inset-0 flex items-center justify-center opacity-20">
-        {[...Array(3)].map((_, i) => (
-          <motion.div key={i} animate={{ scale: [1, 1.3, 1], opacity: [0.1, 0.25, 0.1] }}
-            transition={{ duration: 4 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.5 }}
-            className="absolute rounded-full border border-cyan-500/30"
-            style={{ width: `${200 + i * 150}px`, height: `${200 + i * 150}px` }} />
+        {[...Array(4)].map((_, i) => (
+          <motion.div
+            key={i}
+            animate={{ scale: [1, 1.4, 1], opacity: [0.1, 0.3, 0.1] }}
+            transition={{ duration: 5 + i, repeat: Infinity, ease: "easeInOut", delay: i * 0.3 }}
+            className="absolute rounded-full border border-cyan-500/40"
+            style={{ width: `${150 + i * 150}px`, height: `${150 + i * 150}px` }}
+          />
         ))}
       </div>
       
-      <motion.div initial={{ scale: 0.8, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} transition={{ duration: 0.8 }} className="relative z-10 mb-8">
-        <motion.div animate={{ rotate: 360 }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
-          className={`w-24 h-24 rounded-2xl border-2 border-dashed ${borderColor} flex items-center justify-center`}>
-          <Hexagon className={`w-12 h-12 ${theme.accent}`} />
+      <motion.div
+        initial={{ scale: 0.8, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        transition={{ duration: 0.8 }}
+        className="relative z-10 mb-8"
+      >
+        <motion.div
+          animate={{ rotate: 360 }}
+          transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          className={`w-28 h-28 rounded-2xl border-2 border-dashed ${borderColor} flex items-center justify-center backdrop-blur-sm bg-white/5`}
+        >
+          <Hexagon className={`w-14 h-14 ${theme.accent}`} />
         </motion.div>
-        <motion.div className="absolute -inset-8 rounded-full blur-3xl opacity-40"
+        <motion.div
+          className="absolute -inset-8 rounded-full blur-3xl opacity-40"
           style={{ backgroundColor: glowColor1 }}
-          animate={{ scale: [1, 1.1, 1], opacity: [0.3, 0.5, 0.3] }} transition={{ duration: 3, repeat: Infinity }} />
+          animate={{ scale: [1, 1.2, 1], opacity: [0.3, 0.6, 0.3] }}
+          transition={{ duration: 3, repeat: Infinity }}
+        />
       </motion.div>
       
       <motion.div className="text-center relative z-10">
-        <motion.h1 initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}
-          className={`text-2xl md:text-3xl font-black ${theme.text} tracking-tight mb-2`}>
+        <motion.h1
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          className={`text-3xl md:text-4xl font-black ${theme.text} tracking-tight mb-2`}
+        >
           Crafting Your Lesson
         </motion.h1>
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.6, delay: 0.2 }}
-          className={`${theme.accent} text-sm font-bold tracking-[0.3em] uppercase mb-6`}>
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className={`${theme.accent} text-sm font-bold tracking-[0.3em] uppercase mb-6`}
+        >
           {statusMessage}
         </motion.p>
       </motion.div>
       
-      <div className="relative z-10 w-72 mb-6">
-        <div className="h-1 bg-white/10 rounded-full overflow-hidden">
-          <motion.div initial={{ width: 0 }} animate={{ width: `${progress}%` }} transition={{ duration: 0.5 }}
-            className={`h-full bg-gradient-to-r ${theme.gradient} rounded-full relative`}>
-            <motion.div animate={{ x: ['-100%', '100%'] }} transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
-              className="absolute inset-y-0 w-10 bg-white/30 rounded-full blur-sm" />
+      <div className="relative z-10 w-80 mb-6">
+        <div className="h-2 bg-white/10 rounded-full overflow-hidden backdrop-blur-sm">
+          <motion.div
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.5 }}
+            className={`h-full bg-gradient-to-r ${theme.gradient} rounded-full relative`}
+          >
+            <motion.div
+              animate={{ x: ['-100%', '100%'] }}
+              transition={{ duration: 1.5, repeat: Infinity, ease: "linear" }}
+              className="absolute inset-y-0 w-20 bg-white/30 rounded-full blur-sm"
+            />
           </motion.div>
         </div>
-        <motion.p initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.4 }}
-          className={`text-center ${theme.muted} font-mono text-[10px] tracking-wider mt-3`}>
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.4 }}
+          className={`text-center ${theme.muted} font-mono text-xs tracking-wider mt-3`}
+        >
           {Math.round(progress)}% Complete
         </motion.p>
       </div>
       
-      <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.8 }}
-        className="absolute bottom-16 flex items-center gap-6 text-white/30 text-[10px] font-mono tracking-wider">
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.8 }}
+        className="absolute bottom-16 flex items-center gap-8 text-white/40 text-xs font-mono tracking-wider"
+      >
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-lg shadow-green-500/50" />
           <span>AI ACTIVE</span>
         </div>
-        <div className="flex items-center gap-2">
-          <div className="w-2 h-2 rounded-full bg-cyan-500 animate-pulse" />
+        <div className="flex items-center gap-3">
+          <div className="w-2.5 h-2.5 rounded-full bg-cyan-500 animate-pulse shadow-lg shadow-cyan-500/50" />
           <span>GENERATING</span>
         </div>
       </motion.div>
@@ -422,8 +488,11 @@ const ImmersiveBuildMode = ({ theme, progress, statusMessage }: {
 const OfflineIndicator = ({ isOffline, theme }: { isOffline: boolean; theme: ThemeConfig }) => {
   if (!isOffline) return null;
   return (
-    <motion.div initial={{ y: -50, opacity: 0 }} animate={{ y: 0, opacity: 1 }}
-      className={`fixed top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-4 py-2 rounded-full ${theme.card} border ${theme.border} shadow-lg`}>
+    <motion.div
+      initial={{ y: -50, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      className={`fixed top-16 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2 px-5 py-2.5 rounded-full ${theme.card} border ${theme.border} shadow-xl backdrop-blur-md`}
+    >
       <WifiOff className={`w-4 h-4 ${theme.muted}`} />
       <span className={`text-xs font-medium ${theme.text}`}>Offline Mode • Content cached</span>
     </motion.div>
@@ -440,6 +509,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
   const blockRefs = useRef<Record<string, HTMLDivElement>>({});
   const pollingRef = useRef<NodeJS.Timeout | null>(null);
+  const quizStartTimes = useRef<Record<string, number>>({}); // FIX: per-quiz start time
 
   const [chapter, setChapter] = useState<ChapterData | null>(null);
   const [profileData, setProfileData] = useState<any>(null);
@@ -475,8 +545,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   const [showHint, setShowHint] = useState<Record<string, boolean>>({});
   const [showBlockActions, setShowBlockActions] = useState<string | null>(null);
 
-  // ✅ FIX #3: Hydration-safe useScroll
-  // ✅ FIX #3: Use default window scroll to bypass unhydrated ref errors
+  // FIX #3: Hydration-safe useScroll
   const { scrollYProgress } = useScroll();
   const scrollProgress = useTransform(scrollYProgress, [0, 1], [0, 100]);
   const [progressValue, setProgressValue] = useState(0);
@@ -810,9 +879,47 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     return () => { if (typeof window !== 'undefined') window.speechSynthesis.cancel(); };
   }, []);
 
+  // ✅ Define blocks early using useMemo (after chapter is loaded, but before conditional returns)
+  const blocks = useMemo(() => {
+    return chapter?.mixedContent ? (Array.isArray(chapter.mixedContent) ? chapter.mixedContent : []) : [];
+  }, [chapter]);
+
+  // ============================================================================
+  // QUIZ START TIME TRACKING (now uses `blocks` safely)
+  // ============================================================================
+  useEffect(() => {
+    if (!blocks.length) return;
+
+    const quizElements = blocks
+      .filter(b => b.type === 'quiz' && b.quizData)
+      .map(b => ({ id: b.quizData!.id, element: blockRefs.current[b.id] }))
+      .filter(item => item.element);
+
+    if (quizElements.length === 0) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            const quiz = quizElements.find(q => q.element === entry.target);
+            if (quiz && !quizStartTimes.current[quiz.id]) {
+              quizStartTimes.current[quiz.id] = Date.now();
+              observer.unobserve(entry.target); // stop observing after first appearance
+            }
+          }
+        });
+      },
+      { threshold: 0.5 }
+    );
+
+    quizElements.forEach(({ element }) => observer.observe(element));
+    return () => observer.disconnect();
+  }, [blocks]);
+
   const handleQuizAnswer = useCallback((quizId: string, selectedOption: string | string[], correctAnswer: string | string[], points: number) => {
     if (quizState[quizId]) return;
-    const timeTaken = Math.floor((Date.now() - sessionStartTime) / 1000);
+    const startTime = quizStartTimes.current[quizId] || sessionStartTime;
+    const timeTaken = Math.floor((Date.now() - startTime) / 1000);
     const isCorrect = Array.isArray(correctAnswer)
       ? Array.isArray(selectedOption) && [...selectedOption].sort().join(',') === [...correctAnswer].sort().join(',')
       : selectedOption === correctAnswer;
@@ -911,6 +1018,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   const estimatedTotalTime = chapter?.mixedContent?.reduce((acc: number, block: ContentBlock) => acc + (block.estimatedReadTime || 2), 0) || 30;
   const remainingTime = Math.max(0, estimatedTotalTime * 60 - readingTime);
 
+
   // ============================================================================
   // LOADING & ERROR STATES
   // ============================================================================
@@ -921,9 +1029,12 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   if (loading) {
     return (
       <div className={`min-h-screen ${activeTheme.bg} flex flex-col items-center justify-center ${activeTheme.text} touch-none`}>
-        <ParticleField theme={activeTheme} count={20} />
-        <motion.div animate={{ rotate: 360 }} transition={{ duration: 3, repeat: Infinity, ease: "linear" }}>
-          <Hexagon className={`w-16 h-16 ${activeTheme.accent} mb-6`} />
+        <ParticleField theme={activeTheme} count={30} />
+        <motion.div
+          animate={{ rotate: 360, scale: [1, 1.1, 1] }}
+          transition={{ duration: 4, repeat: Infinity, ease: "linear" }}
+        >
+          <Hexagon className={`w-20 h-20 ${activeTheme.accent} mb-6`} />
         </motion.div>
         <p className="font-mono tracking-widest uppercase text-sm animate-pulse">Establishing Neural Link...</p>
         <Progress value={progressValue} className={`w-48 mt-4 h-1 ${activeTheme.card}`} />
@@ -935,18 +1046,28 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   if (error || !chapter) {
     return (
       <div className={`min-h-screen ${activeTheme.bg} flex flex-col items-center justify-center p-4 text-center`}>
-        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200 }}>
-          <XCircle className={`w-16 h-16 mb-4 ${activeTheme.muted}`} />
+        <motion.div
+          initial={{ scale: 0 }}
+          animate={{ scale: 1 }}
+          transition={{ type: "spring", stiffness: 200 }}
+        >
+          <XCircle className={`w-20 h-20 mb-4 ${activeTheme.muted}`} />
         </motion.div>
-        <h2 className={`text-2xl font-bold ${activeTheme.text} mb-2`}>Connection Interrupted</h2>
-        <p className={`${activeTheme.muted} mb-8`}>{error || 'Chapter data unavailable.'}</p>
+        <h2 className={`text-3xl font-bold ${activeTheme.text} mb-2`}>Connection Interrupted</h2>
+        <p className={`${activeTheme.muted} mb-8 max-w-md`}>{error || 'Chapter data unavailable.'}</p>
         <div className="flex gap-4">
           {usingCache && (
-            <Button onClick={() => fetchChapterData(true)} className={`${activeTheme.card} ${activeTheme.text} border ${activeTheme.border}`}>
+            <Button
+              onClick={() => fetchChapterData(true)}
+              className={`${activeTheme.card} ${activeTheme.text} border ${activeTheme.border} hover:scale-105 transition-transform`}
+            >
               <RefreshCw className="w-4 h-4 mr-2" /> Retry Online
             </Button>
           )}
-          <Button onClick={() => router.push('/dashboard')} className={`${activeTheme.accentBg} text-white`}>
+          <Button
+            onClick={() => router.push('/dashboard')}
+            className={`${activeTheme.accentBg} text-white hover:scale-105 transition-transform`}
+          >
             Return to Dashboard
           </Button>
         </div>
@@ -954,7 +1075,6 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
     );
   }
 
-  const blocks: ContentBlock[] = Array.isArray(chapter.mixedContent) ? chapter.mixedContent : [];
   const t = activeTheme;
   const completionPercentage = blocks.length > 0 ? (completedBlocks.size / blocks.length) * 100 : 0;
   const quizBlocks = blocks.filter(b => b.type === 'quiz');
@@ -974,12 +1094,18 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
       
       {!t.isLight && (
         <>
-          <motion.div animate={{ x: [0, 100, 0], y: [0, 50, 0] }} transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
+          <motion.div
+            animate={{ x: [0, 100, 0], y: [0, 50, 0] }}
+            transition={{ duration: 20, repeat: Infinity, ease: "linear" }}
             className="absolute top-20 left-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-30"
-            style={{ backgroundColor: getColorValue(t.blob1 || t.accentLight, t.isLight) }} />
-          <motion.div animate={{ x: [0, -100, 0], y: [0, -50, 0] }} transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
+            style={{ backgroundColor: getColorValue(t.blob1 || t.accentLight, t.isLight) }}
+          />
+          <motion.div
+            animate={{ x: [0, -100, 0], y: [0, -50, 0] }}
+            transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
             className="absolute bottom-20 right-10 w-96 h-96 rounded-full blur-3xl pointer-events-none opacity-30"
-            style={{ backgroundColor: getColorValue(t.blob2 || t.accentLight, t.isLight) }} />
+            style={{ backgroundColor: getColorValue(t.blob2 || t.accentLight, t.isLight) }}
+          />
         </>
       )}
       
@@ -991,7 +1117,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         <div className="max-w-6xl mx-auto px-4 md:px-6">
           <div className="h-16 flex items-center justify-between">
             <div className="flex items-center gap-4">
-              <Button variant="ghost" onClick={() => router.back()} className={`${t.muted} hover:${t.accent} hover:${t.accentLight} transition-colors rounded-full px-4`}>
+              <Button
+                variant="ghost"
+                onClick={() => router.back()}
+                className={`${t.muted} hover:${t.accent} hover:${t.accentLight} transition-all rounded-full px-4 hover:scale-105`}
+              >
                 <ArrowLeft className="w-5 h-5 mr-2" />
                 <span className="hidden sm:inline">Back</span>
               </Button>
@@ -999,42 +1129,54 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             </div>
             <div className="flex items-center gap-4">
               <div className="hidden md:flex items-center gap-4">
-                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.accentLight} border ${t.border}`}>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.accentLight} border ${t.border} shadow-sm`}
+                >
                   <Zap className={`w-4 h-4 ${t.accent}`} />
                   <span className={`text-sm font-bold ${t.accent}`}>{totalPoints} pts</span>
-                </div>
-                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.card} border ${t.border}`}>
+                </motion.div>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.card} border ${t.border} shadow-sm`}
+                >
                   <CheckCircle2 className="w-4 h-4 text-emerald-500" />
                   <span className={`text-sm font-bold ${t.text}`}>{quizzesCorrect}/{quizzesCompleted}</span>
-                </div>
-                <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.card} border ${t.border}`}>
+                </motion.div>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-3 py-1.5 rounded-full ${t.card} border ${t.border} shadow-sm`}
+                >
                   <Clock className={`w-4 h-4 ${t.muted}`} />
                   <span className={`text-sm font-bold ${t.text}`}>{formatTime(readingTime)}</span>
-                </div>
+                </motion.div>
               </div>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" className={`${t.muted} hover:${t.accent} rounded-full w-10 h-10 p-0`}>
+                  <Button
+                    variant="ghost"
+                    className={`${t.muted} hover:${t.accent} rounded-full w-10 h-10 p-0 hover:scale-110 transition-transform`}
+                  >
                     <MoreVertical className="w-5 h-5" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className={`${t.card} border ${t.border}`}>
-                  <DropdownMenuItem onClick={toggleFullscreen} className="cursor-pointer">
-                    {isFullscreen ? <Minimize2 className="w-4 h-4 mr-2" /> : <Maximize2 className="w-4 h-4 mr-2" />}
+                <DropdownMenuContent align="end" className={`${t.card} border ${t.border} backdrop-blur-xl`}>
+                  <DropdownMenuItem onClick={toggleFullscreen} className="cursor-pointer gap-2">
+                    {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                     {isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className={t.border} />
-                  <DropdownMenuItem onClick={() => setShowNotesDialog(true)} className="cursor-pointer">
-                    <PenLine className="w-4 h-4 mr-2" />
+                  <DropdownMenuItem onClick={() => setShowNotesDialog(true)} className="cursor-pointer gap-2">
+                    <PenLine className="w-4 h-4" />
                     View Notes ({notes.length})
                   </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setShowBookmarksDialog(true)} className="cursor-pointer">
-                    <Bookmark className="w-4 h-4 mr-2" />
+                  <DropdownMenuItem onClick={() => setShowBookmarksDialog(true)} className="cursor-pointer gap-2">
+                    <Bookmark className="w-4 h-4" />
                     Bookmarks ({bookmarks.length})
                   </DropdownMenuItem>
                   <DropdownMenuSeparator className={t.border} />
-                  <DropdownMenuItem onClick={() => router.push('/dashboard')} className="cursor-pointer text-red-500">
-                    <ArrowLeft className="w-4 h-4 mr-2" />
+                  <DropdownMenuItem onClick={() => router.push('/dashboard')} className="cursor-pointer gap-2 text-red-500">
+                    <ArrowLeft className="w-4 h-4" />
                     Exit Chapter
                   </DropdownMenuItem>
                 </DropdownMenuContent>
@@ -1058,25 +1200,33 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
       </header>
 
       <main className="max-w-4xl mx-auto px-4 md:px-8 pt-8 md:pt-12 space-y-12 relative z-10">
-        <motion.div initial={{ opacity: 0, y: 30 }} animate={{ opacity: 1, y: 0 }} className={`text-center pb-10 border-b ${t.border}`}>
-          <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} transition={{ type: "spring", stiffness: 200, delay: 0.2 }}
-            className={`w-24 h-24 ${t.accentLight} ${t.accent} rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border ${t.border}`}>
+        <motion.div
+          initial={{ opacity: 0, y: 30 }}
+          animate={{ opacity: 1, y: 0 }}
+          className={`text-center pb-10 border-b ${t.border}`}
+        >
+          <motion.div
+            initial={{ scale: 0 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 200, delay: 0.2 }}
+            className={`w-24 h-24 ${t.accentLight} ${t.accent} rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner border ${t.border}`}
+          >
             <BookOpen className="w-12 h-12" />
           </motion.div>
           <h1 className={`text-4xl md:text-6xl font-black tracking-tight leading-[1.1] mb-6 ${t.text}`}>{chapter.title}</h1>
           <div className="flex flex-wrap items-center justify-center gap-3">
-            <Badge variant="secondary" className={`${t.accentLight} ${t.accent} border ${t.border}`}>
-              <Network className="w-3 h-3 mr-1" /> AI Structured
+            <Badge variant="secondary" className={`${t.accentLight} ${t.accent} border ${t.border} px-4 py-2`}>
+              <Network className="w-3 h-3 mr-2" /> AI Structured
             </Badge>
-            <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border}`}>
-              <Clock className="w-3 h-3 mr-1" /> ~{Math.ceil(estimatedTotalTime)} mins
+            <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border} px-4 py-2`}>
+              <Clock className="w-3 h-3 mr-2" /> ~{Math.ceil(estimatedTotalTime)} mins
             </Badge>
-            <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border}`}>
-              <Layers className="w-3 h-3 mr-1" /> {blocks.length} blocks
+            <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border} px-4 py-2`}>
+              <Layers className="w-3 h-3 mr-2" /> {blocks.length} blocks
             </Badge>
             {quizBlocks.length > 0 && (
-              <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border}`}>
-                <Brain className="w-3 h-3 mr-1" /> {quizBlocks.length} quizzes
+              <Badge variant="secondary" className={`${t.card} ${t.text} border ${t.border} px-4 py-2`}>
+                <Brain className="w-3 h-3 mr-2" /> {quizBlocks.length} quizzes
               </Badge>
             )}
           </div>
@@ -1110,16 +1260,48 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
           if (block.type === 'story' && block.content) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }}
-                transition={{ duration: 0.6 }} className={`relative group ${isCurrentBlock ? 'ring-2 ring-offset-4 ring-offset-transparent' : ''} ${t.borderAccent}`}
-                onMouseEnter={() => setShowBlockActions(block.id)} onMouseLeave={() => setShowBlockActions(null)}>
-                
-                <div className={`absolute -right-14 top-0 flex flex-col gap-2 transition-opacity duration-300 ${showBlockActions === block.id ? 'opacity-100' : 'opacity-0'}`}>
-                  <FloatingActionButton icon={isSpeaking && speakingBlockId === block.id ? VolumeX : Volume2} onClick={() => toggleSpeech(block.id, block.content || '')} label="Read Aloud" theme={t} active={isSpeaking && speakingBlockId === block.id} />
-                  <FloatingActionButton icon={hasBookmark ? BookmarkCheck : Bookmark} onClick={() => toggleBookmark(block.id)} label="Bookmark" theme={t} active={hasBookmark} />
-                  <FloatingActionButton icon={PenLine} onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }} label="Add Note" theme={t} badge={notes.filter(n => n.blockId === block.id).length} />
-                  <FloatingActionButton icon={Heart} onClick={() => toggleLike(block.id)} label="Like" theme={t} active={isLiked} />
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, y: 50 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.7, ease: "easeOut" }}
+                className={`relative group ${isCurrentBlock ? 'ring-2 ring-offset-4 ring-offset-transparent' : ''} ${t.borderAccent}`}
+                onMouseEnter={() => setShowBlockActions(block.id)}
+                onMouseLeave={() => setShowBlockActions(null)}
+              >
+                <div className={`absolute -right-16 top-0 flex flex-col gap-3 transition-all duration-300 ${showBlockActions === block.id ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'}`}>
+                  {['story', 'fact', 'summary'].includes(block.type) && (
+                    <FloatingActionButton
+                      icon={isSpeaking && speakingBlockId === block.id ? VolumeX : Volume2}
+                      onClick={() => toggleSpeech(block.id, block.content || '')}
+                      label="Read Aloud"
+                      theme={t}
+                      active={isSpeaking && speakingBlockId === block.id}
+                    />
+                  )}
+                  <FloatingActionButton
+                    icon={hasBookmark ? BookmarkCheck : Bookmark}
+                    onClick={() => toggleBookmark(block.id)}
+                    label="Bookmark"
+                    theme={t}
+                    active={hasBookmark}
+                  />
+                  <FloatingActionButton
+                    icon={PenLine}
+                    onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }}
+                    label="Add Note"
+                    theme={t}
+                    badge={notes.filter(n => n.blockId === block.id).length}
+                  />
+                  <FloatingActionButton
+                    icon={Heart}
+                    onClick={() => toggleLike(block.id)}
+                    label="Like"
+                    theme={t}
+                    active={isLiked}
+                  />
                 </div>
                 
                 <div className="flex items-center gap-3 mb-4">
@@ -1128,36 +1310,73 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                     <h3 className={`text-lg font-bold ${t.text}`}>{block.title || 'Story'}</h3>
                     <p className={`text-xs ${t.muted}`}>Block {blockNumber} of {blocks.length} • ~{block.estimatedReadTime || 3} min read</p>
                   </div>
-                  {isCompleted && <Badge className="ml-auto bg-emerald-500/10 text-emerald-600 border-emerald-500/30"><CheckCircle2 className="w-3 h-3 mr-1" /> Done</Badge>}
+                  {isCompleted && (
+                    <motion.div
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
+                      className="ml-auto"
+                    >
+                      <Badge className="bg-emerald-500/10 text-emerald-600 border-emerald-500/30">
+                        <CheckCircle2 className="w-3 h-3 mr-1" /> Done
+                      </Badge>
+                    </motion.div>
+                  )}
                 </div>
                 
                 <HolographicCard theme={t}>
-                  <div className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-10 shadow-sm transition-all`} style={{ fontSize: `${fontSize}px` }}>
-                    <p className={`text-[1.1rem] md:text-[1.2rem] leading-[1.9] font-medium ${t.isLight ? 'text-slate-700' : 'text-slate-300'}`}>{block.content}</p>
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    transition={{ duration: 0.2 }}
+                    className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-10 shadow-sm transition-all`}
+                    style={{ fontSize: `${fontSize}px` }}
+                  >
+                    <p className={`text-[1.1rem] md:text-[1.2rem] leading-[1.9] font-medium ${t.isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                      {block.content}
+                    </p>
                     <div className="flex items-center justify-between mt-6 pt-6 border-t border-slate-100/10">
                       <div className="flex items-center gap-2">
-                        {hasNote && <Badge className={`${t.accentLight} ${t.accent} border ${t.border}`}><PenLine className="w-3 h-3 mr-1" /> {notes.filter(n => n.blockId === block.id).length} notes</Badge>}
+                        {hasNote && (
+                          <Badge className={`${t.accentLight} ${t.accent} border ${t.border}`}>
+                            <PenLine className="w-3 h-3 mr-1" /> {notes.filter(n => n.blockId === block.id).length} notes
+                          </Badge>
+                        )}
                         {block.metadata?.tags && (
                           <div className="flex gap-1">
                             {block.metadata.tags.slice(0, 3).map((tag, i) => (
-                              <Badge key={i} variant="outline" className={`${t.card} ${t.text} border ${t.border} text-xs`}>#{tag}</Badge>
+                              <Badge key={i} variant="outline" className={`${t.card} ${t.text} border ${t.border} text-xs`}>
+                                #{tag}
+                              </Badge>
                             ))}
                           </div>
                         )}
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 </HolographicCard>
                 
                 <AnimatePresence>
                   {activeNoteBlock === block.id && (
-                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="mt-4 overflow-hidden">
-                      <Card className={`${t.card} border ${t.border}`}>
+                    <motion.div
+                      initial={{ opacity: 0, height: 0 }}
+                      animate={{ opacity: 1, height: 'auto' }}
+                      exit={{ opacity: 0, height: 0 }}
+                      className="mt-4 overflow-hidden"
+                    >
+                      <Card className={`${t.card} border ${t.border} shadow-lg`}>
                         <CardContent className="p-4 space-y-3">
-                          <Textarea value={noteContent} onChange={(e) => setNoteContent(e.target.value)} placeholder="Write your note here..." className={`min-h-[100px] ${t.bg} ${t.text} border ${t.border}`} />
+                          <Textarea
+                            value={noteContent}
+                            onChange={(e) => setNoteContent(e.target.value)}
+                            placeholder="Write your note here..."
+                            className={`min-h-[100px] ${t.bg} ${t.text} border ${t.border} rounded-xl`}
+                          />
                           <div className="flex justify-end gap-2">
-                            <Button variant="ghost" size="sm" onClick={() => setActiveNoteBlock(null)}>Cancel</Button>
-                            <Button size="sm" className={`${t.accentBg} text-white`} onClick={() => saveNote(block.id)}>Save Note</Button>
+                            <Button variant="ghost" size="sm" onClick={() => setActiveNoteBlock(null)}>
+                              Cancel
+                            </Button>
+                            <Button size="sm" className={`${t.accentBg} text-white`} onClick={() => saveNote(block.id)}>
+                              Save Note
+                            </Button>
                           </div>
                         </CardContent>
                       </Card>
@@ -1170,18 +1389,56 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
           if (block.type === 'fact' && block.content) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, x: -30 }} whileInView={{ opacity: 1, x: 0 }} viewport={{ once: false, margin: "-50px" }}
-                transition={{ duration: 0.5, type: "spring" }} className="relative group"
-                onMouseEnter={() => setShowBlockActions(block.id)} onMouseLeave={() => setShowBlockActions(null)}>
-                
-                <div className={`absolute -right-14 top-0 flex flex-col gap-2 transition-opacity duration-300 ${showBlockActions === block.id ? 'opacity-100' : 'opacity-0'}`}>
-                  <FloatingActionButton icon={Bookmark} onClick={() => toggleBookmark(block.id)} label="Bookmark" theme={t} />
-                  <FloatingActionButton icon={PenLine} onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }} label="Add Note" theme={t} />
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, x: -30 }}
+                whileInView={{ opacity: 1, x: 0 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.6, type: "spring" }}
+                className="relative group"
+                onMouseEnter={() => setShowBlockActions(block.id)}
+                onMouseLeave={() => setShowBlockActions(null)}
+              >
+                <div className={`absolute -right-16 top-0 flex flex-col gap-3 transition-all duration-300 ${showBlockActions === block.id ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'}`}>
+                  {['story', 'fact', 'summary'].includes(block.type) && (
+                    <FloatingActionButton
+                      icon={isSpeaking && speakingBlockId === block.id ? VolumeX : Volume2}
+                      onClick={() => toggleSpeech(block.id, block.content || '')}
+                      label="Read Aloud"
+                      theme={t}
+                      active={isSpeaking && speakingBlockId === block.id}
+                    />
+                  )}
+                  <FloatingActionButton
+                    icon={hasBookmark ? BookmarkCheck : Bookmark}
+                    onClick={() => toggleBookmark(block.id)}
+                    label="Bookmark"
+                    theme={t}
+                    active={hasBookmark}
+                  />
+                  <FloatingActionButton
+                    icon={PenLine}
+                    onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }}
+                    label="Add Note"
+                    theme={t}
+                    badge={notes.filter(n => n.blockId === block.id).length}
+                  />
+                  <FloatingActionButton
+                    icon={Heart}
+                    onClick={() => toggleLike(block.id)}
+                    label="Like"
+                    theme={t}
+                    active={isLiked}
+                  />
                 </div>
                 
-                <div className={`absolute -left-4 top-0 bottom-0 w-1 ${t.accentBg} rounded-full`} />
-                <div className={`${t.accentLight} border-l-4 ${t.borderAccent || t.border} p-6 md:p-8 rounded-r-3xl shadow-sm relative overflow-hidden group/card`}>
+                <div className={`absolute -left-4 top-0 bottom-0 w-1 ${t.accentBg} rounded-full shadow-lg`} />
+                <motion.div
+                  whileHover={{ x: 5 }}
+                  transition={{ duration: 0.2 }}
+                  className={`${t.accentLight} border-l-4 ${t.borderAccent || t.border} p-6 md:p-8 rounded-r-3xl shadow-sm relative overflow-hidden group/card`}
+                >
                   <div className={`absolute top-0 right-0 p-4 opacity-10 group-hover/card:opacity-20 transition-opacity ${t.accent}`}>
                     <Brain className="w-24 h-24 -mt-8 -mr-8" />
                   </div>
@@ -1190,38 +1447,58 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                       <Sparkles className={`w-6 h-6 ${t.accent}`} />
                     </div>
                     <div className="flex-1">
-                      <p className={`font-semibold text-lg md:text-xl leading-relaxed ${t.isLight ? 'text-slate-900' : 'text-white'}`}>{block.content}</p>
+                      <p className={`font-semibold text-lg md:text-xl leading-relaxed ${t.isLight ? 'text-slate-900' : 'text-white'}`}>
+                        {block.content}
+                      </p>
                       {block.metadata?.tags && (
                         <div className="flex flex-wrap gap-2 mt-4">
                           {block.metadata.tags.map((tag, i) => (
-                            <Badge key={i} variant="outline" className={`${t.card} ${t.text} border ${t.border} text-xs`}>#{tag}</Badge>
+                            <Badge key={i} variant="outline" className={`${t.card} ${t.text} border ${t.border} text-xs`}>
+                              #{tag}
+                            </Badge>
                           ))}
                         </div>
                       )}
                     </div>
                   </div>
-                </div>
+                </motion.div>
               </motion.div>
             );
           }
 
           if (block.type === 'image' && (block.content || block.imageData?.url)) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, scale: 1.05 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: false, margin: "-100px" }}
-                transition={{ duration: 0.8, ease: "easeOut" }} className="relative group">
-                
-                <div className={`rounded-[2rem] overflow-hidden border ${t.border} relative group/card`}>
-                  <img src={block.content || block.imageData?.url} alt={block.title || 'AI Generated Concept'} className="w-full h-auto object-cover" loading="lazy" />
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, scale: 1.05 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: false, margin: "-100px" }}
+                transition={{ duration: 0.8, ease: "easeOut" }}
+                className="relative group"
+              >
+                <div className={`rounded-[2rem] overflow-hidden border ${t.border} relative group/card shadow-2xl`}>
+                  <img
+                    src={block.content || block.imageData?.url}
+                    alt={block.title || 'AI Generated Concept'}
+                    className="w-full h-auto object-cover transition-transform duration-500 group-hover/card:scale-105"
+                    loading="lazy"
+                  />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover/card:opacity-100 transition-opacity duration-300 flex items-end p-6">
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-white font-bold tracking-widest uppercase bg-black/40 border border-white/20 backdrop-blur-md px-4 py-2 rounded-xl">AI Visual Matrix</span>
+                      <span className="text-xs text-white font-bold tracking-widest uppercase bg-black/40 border border-white/20 backdrop-blur-md px-4 py-2 rounded-xl">
+                        AI Visual Matrix
+                      </span>
                       <Button size="sm" variant="secondary" className="bg-white/20 backdrop-blur-md text-white border-0">
                         <Maximize2 className="w-4 h-4 mr-1" /> Expand
                       </Button>
                     </div>
                   </div>
-                  {block.title && <div className="absolute top-4 left-4"><Badge className={`${t.accentBg} text-white border-0`}>{block.title}</Badge></div>}
+                  {block.title && (
+                    <div className="absolute top-4 left-4">
+                      <Badge className={`${t.accentBg} text-white border-0 shadow-lg`}>{block.title}</Badge>
+                    </div>
+                  )}
                   {(block.imageData?.caption || block.imageData?.source) && (
                     <div className="absolute bottom-4 left-4 right-4">
                       <p className="text-xs text-white/80 backdrop-blur-md bg-black/40 px-3 py-2 rounded-lg inline-block">
@@ -1239,11 +1516,21 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
             const state = quizState[q.id];
             
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, y: 40 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }} className="relative">
-                
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, y: 50 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.7, ease: "easeOut" }}
+                className="relative"
+              >
                 <HolographicCard theme={t}>
-                  <div className={`${t.card} border ${t.border} shadow-2xl rounded-[2.5rem] overflow-hidden backdrop-blur-xl`}>
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    transition={{ duration: 0.2 }}
+                    className={`${t.card} border ${t.border} shadow-2xl rounded-[2.5rem] overflow-hidden backdrop-blur-xl`}
+                  >
                     <div className={`p-6 md:p-8 border-b ${t.border} bg-black/5 flex items-start justify-between gap-4`}>
                       <div className="flex items-start gap-4">
                         <div className={`${t.bg} border ${t.border} p-3 rounded-2xl shadow-inner shrink-0`}>
@@ -1252,7 +1539,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         <div>
                           <h3 className={`font-bold text-lg md:text-xl leading-snug ${t.text}`}>{q.prompt}</h3>
                           <div className="flex items-center gap-3 mt-2">
-                            <Badge variant="secondary" className={`text-xs ${q.difficulty === 'easy' ? 'bg-emerald-100 text-emerald-700' : q.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-700'}`}>
+                            <Badge variant="secondary" className={`text-xs ${
+                              q.difficulty === 'easy' ? 'bg-emerald-100 text-emerald-700' :
+                              q.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
                               {q.difficulty.toUpperCase()}
                             </Badge>
                             <span className={`text-xs ${t.muted}`}>{q.points} points</span>
@@ -1261,7 +1552,11 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         </div>
                       </div>
                       {state && (
-                        <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }} className={`px-4 py-2 rounded-full ${state.isCorrect ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'} font-bold text-sm`}>
+                        <motion.div
+                          initial={{ scale: 0 }}
+                          animate={{ scale: 1 }}
+                          className={`px-4 py-2 rounded-full ${state.isCorrect ? 'bg-emerald-500 text-white' : 'bg-rose-500 text-white'} font-bold text-sm shadow-lg`}
+                        >
                           {state.isCorrect ? `+${q.points}` : '0'} pts
                         </motion.div>
                       )}
@@ -1280,49 +1575,84 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         }
                         
                         return (
-                          <motion.button key={i} disabled={!!state} onClick={() => handleQuizAnswer(q.id, opt, q.correctAnswer, q.points)}
-                            whileHover={!state ? { scale: 1.02 } : {}} whileTap={!state ? { scale: 0.98 } : {}}
-                            className={`w-full text-left p-4 md:p-5 rounded-2xl border-2 transition-all duration-300 flex justify-between items-center font-bold text-[15px] ${buttonClass}`}>
+                          <motion.button
+                            key={i}
+                            disabled={!!state}
+                            onClick={() => handleQuizAnswer(q.id, opt, q.correctAnswer, q.points)}
+                            whileHover={!state ? { scale: 1.02, y: -2 } : {}}
+                            whileTap={!state ? { scale: 0.98 } : {}}
+                            className={`w-full text-left p-4 md:p-5 rounded-2xl border-2 transition-all duration-300 flex justify-between items-center font-bold text-[15px] ${buttonClass}`}
+                          >
                             <span className="leading-relaxed">{opt}</span>
-                            {state && isCorrectAnswer && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }}><CheckCircle2 className="w-6 h-6 shrink-0 ml-4 text-emerald-500" /></motion.div>}
-                            {state && isSelected && !isCorrectAnswer && <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }}><XCircle className="w-6 h-6 shrink-0 ml-4 text-rose-500" /></motion.div>}
+                            {state && isCorrectAnswer && (
+                              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }}>
+                                <CheckCircle2 className="w-6 h-6 shrink-0 ml-4 text-emerald-500" />
+                              </motion.div>
+                            )}
+                            {state && isSelected && !isCorrectAnswer && (
+                              <motion.div initial={{ scale: 0 }} animate={{ scale: 1 }}>
+                                <XCircle className="w-6 h-6 shrink-0 ml-4 text-rose-500" />
+                              </motion.div>
+                            )}
                           </motion.button>
                         );
                       })}
                       
                       {!state && q.hint && (
-                        <Button variant="ghost" size="sm" onClick={() => setShowHint(prev => ({ ...prev, [q.id]: !prev[q.id] }))} className={`${t.muted} hover:${t.accent}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowHint(prev => ({ ...prev, [q.id]: !prev[q.id] }))}
+                          className={`${t.muted} hover:${t.accent} transition-colors`}
+                        >
                           <Lightbulb className="w-4 h-4 mr-2" /> Need a hint?
                         </Button>
                       )}
                       
                       <AnimatePresence>
                         {showHint[q.id] && q.hint && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className={`p-4 rounded-xl ${t.accentLight} border ${t.borderAccent || t.border}`}>
-                            <p className={`text-sm ${t.text}`}><strong className={t.accent}>Hint:</strong> {q.hint}</p>
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            className={`p-4 rounded-xl ${t.accentLight} border ${t.borderAccent || t.border} overflow-hidden`}
+                          >
+                            <p className={`text-sm ${t.text}`}>
+                              <strong className={t.accent}>Hint:</strong> {q.hint}
+                            </p>
                           </motion.div>
                         )}
                       </AnimatePresence>
                       
                       <AnimatePresence>
                         {state && (
-                          <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} className="pt-6 overflow-hidden">
+                          <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            className="pt-6 overflow-hidden"
+                          >
                             <div className={`p-6 rounded-2xl border ${state.isCorrect ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-slate-500/10 border-slate-500/30'}`}>
                               <p className={`text-sm md:text-base leading-relaxed ${t.text}`}>
-                                <strong className={`mr-2 ${state.isCorrect ? 'text-emerald-500' : t.accent}`}>{state.isCorrect ? '✓ Correct!' : '✗ Review:'}</strong>
+                                <strong className={`mr-2 ${state.isCorrect ? 'text-emerald-500' : t.accent}`}>
+                                  {state.isCorrect ? '✓ Correct!' : '✗ Review:'}
+                                </strong>
                                 {q.explanation}
                               </p>
                               <div className="flex items-center gap-4 mt-4 pt-4 border-t border-slate-200/10">
                                 <span className={`text-xs ${t.muted}`}>Was this helpful?</span>
-                                <Button variant="ghost" size="sm" className="h-8"><ThumbsUp className="w-4 h-4 mr-1" /> Yes</Button>
-                                <Button variant="ghost" size="sm" className="h-8"><ThumbsDown className="w-4 h-4 mr-1" /> No</Button>
+                                <Button variant="ghost" size="sm" className="h-8">
+                                  <ThumbsUp className="w-4 h-4 mr-1" /> Yes
+                                </Button>
+                                <Button variant="ghost" size="sm" className="h-8">
+                                  <ThumbsDown className="w-4 h-4 mr-1" /> No
+                                </Button>
                               </div>
                             </div>
                           </motion.div>
                         )}
                       </AnimatePresence>
                     </div>
-                  </div>
+                  </motion.div>
                 </HolographicCard>
               </motion.div>
             );
@@ -1330,9 +1660,14 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
           if (block.type === 'code' && block.codeData) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }}>
-                
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.6 }}
+              >
                 <HolographicCard theme={t}>
                   <div className={`${t.card} border ${t.border} rounded-3xl overflow-hidden shadow-lg`}>
                     <div className={`flex items-center justify-between px-4 py-3 border-b ${t.border} ${t.bg}`}>
@@ -1344,7 +1679,9 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         </div>
                         <span className={`text-xs font-mono ${t.muted} ml-3`}>{block.codeData.language}</span>
                       </div>
-                      <Button variant="ghost" size="sm" className={`h-8 ${t.muted} hover:${t.accent}`}><Share2 className="w-4 h-4 mr-1" /> Copy</Button>
+                      <Button variant="ghost" size="sm" className={`h-8 ${t.muted} hover:${t.accent}`}>
+                        <Share2 className="w-4 h-4 mr-1" /> Copy
+                      </Button>
                     </div>
                     <pre className={`p-6 overflow-x-auto ${t.isLight ? 'bg-slate-900 text-slate-100' : 'bg-slate-950 text-slate-100'}`}>
                       <code className="text-sm font-mono">{block.codeData.code}</code>
@@ -1363,18 +1700,29 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
           if (block.type === 'definition' && block.definitionData) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, scale: 0.95 }} whileInView={{ opacity: 1, scale: 1 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.5 }}>
-                
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, scale: 0.95 }}
+                whileInView={{ opacity: 1, scale: 1 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.5 }}
+              >
                 <HolographicCard theme={t}>
-                  <div className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-8 shadow-sm`}>
+                  <motion.div
+                    whileHover={{ scale: 1.02 }}
+                    transition={{ duration: 0.2 }}
+                    className={`${t.card} border ${t.border} rounded-3xl p-6 md:p-8 shadow-sm`}
+                  >
                     <div className="flex items-start gap-4">
                       <div className={`${t.accentLight} ${t.accent} p-3 rounded-2xl shrink-0`}>
                         <Type className="w-6 h-6" />
                       </div>
                       <div className="flex-1">
                         <h3 className={`text-2xl font-black ${t.text} mb-2`}>{block.definitionData.term}</h3>
-                        <p className={`text-lg leading-relaxed ${t.isLight ? 'text-slate-700' : 'text-slate-300'}`}>{block.definitionData.definition}</p>
+                        <p className={`text-lg leading-relaxed ${t.isLight ? 'text-slate-700' : 'text-slate-300'}`}>
+                          {block.definitionData.definition}
+                        </p>
                         {block.definitionData.example && (
                           <div className={`mt-4 p-4 rounded-xl ${t.bg} border ${t.border}`}>
                             <p className={`text-sm ${t.muted} mb-1`}>Example:</p>
@@ -1383,7 +1731,7 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
                         )}
                       </div>
                     </div>
-                  </div>
+                  </motion.div>
                 </HolographicCard>
               </motion.div>
             );
@@ -1391,20 +1739,65 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
 
           if (block.type === 'summary' && block.content) {
             return (
-              <motion.div key={block.id} ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
-                initial={{ opacity: 0, y: 30 }} whileInView={{ opacity: 1, y: 0 }} viewport={{ once: false, margin: "-50px" }} transition={{ duration: 0.6 }}>
+              <motion.div
+                key={block.id}
+                ref={(el) => { if (el) blockRefs.current[block.id] = el; }}
+                initial={{ opacity: 0, y: 30 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: false, margin: "-50px" }}
+                transition={{ duration: 0.6 }}
+                className="relative"
+              >
+                <div className={`absolute -right-16 top-0 flex flex-col gap-3 transition-all duration-300 ${showBlockActions === block.id ? 'opacity-100 translate-x-0' : 'opacity-0 translate-x-4'}`}>
+                  {['story', 'fact', 'summary'].includes(block.type) && (
+                    <FloatingActionButton
+                      icon={isSpeaking && speakingBlockId === block.id ? VolumeX : Volume2}
+                      onClick={() => toggleSpeech(block.id, block.content || '')}
+                      label="Read Aloud"
+                      theme={t}
+                      active={isSpeaking && speakingBlockId === block.id}
+                    />
+                  )}
+                  <FloatingActionButton
+                    icon={hasBookmark ? BookmarkCheck : Bookmark}
+                    onClick={() => toggleBookmark(block.id)}
+                    label="Bookmark"
+                    theme={t}
+                    active={hasBookmark}
+                  />
+                  <FloatingActionButton
+                    icon={PenLine}
+                    onClick={() => { setActiveNoteBlock(block.id); setNoteContent(''); }}
+                    label="Add Note"
+                    theme={t}
+                    badge={notes.filter(n => n.blockId === block.id).length}
+                  />
+                  <FloatingActionButton
+                    icon={Heart}
+                    onClick={() => toggleLike(block.id)}
+                    label="Like"
+                    theme={t}
+                    active={isLiked}
+                  />
+                </div>
                 
-                <div className={`${t.accentLight} border ${t.borderAccent || t.border} rounded-3xl p-6 md:p-8 shadow-sm`}>
+                <div className={`${t.accentLight} border ${t.borderAccent || t.border} rounded-3xl p-6 md:p-8 shadow-sm relative overflow-hidden`}>
                   <div className="flex items-center gap-3 mb-4">
                     <ListChecks className={`w-6 h-6 ${t.accent}`} />
                     <h3 className={`text-xl font-bold ${t.text}`}>Key Takeaways</h3>
                   </div>
                   <div className={`space-y-3 ${t.text}`}>
                     {block.content.split('\n').map((line, i) => (
-                      <div key={i} className="flex items-start gap-3">
+                      <motion.div
+                        key={i}
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        transition={{ delay: i * 0.1 }}
+                        className="flex items-start gap-3"
+                      >
                         <CheckCircle2 className={`w-5 h-5 ${t.accent} shrink-0 mt-0.5`} />
                         <p className="leading-relaxed">{line.replace(/^[-•*]\s*/, '')}</p>
-                      </div>
+                      </motion.div>
                     ))}
                   </div>
                 </div>
@@ -1416,60 +1809,113 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         })}
 
         {blocks.length > 0 && (
-          <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }}
-            className={`sticky bottom-24 z-30 flex items-center justify-center gap-4 py-4`}>
-            <Button variant="outline" onClick={scrollToPrev} disabled={currentBlockIndex === 0}
-              className={`${t.card} ${t.text} border ${t.border} rounded-full px-6 disabled:opacity-50`}>
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            className={`sticky bottom-24 z-30 flex items-center justify-center gap-4 py-4`}
+          >
+            <Button
+              variant="outline"
+              onClick={scrollToPrev}
+              disabled={currentBlockIndex === 0}
+              className={`${t.card} ${t.text} border ${t.border} rounded-full px-6 disabled:opacity-50 hover:scale-105 transition-transform shadow-lg`}
+            >
               <SkipBack className="w-5 h-5 mr-2" /> Previous
             </Button>
-            <Button variant="outline" onClick={scrollToNext} disabled={currentBlockIndex >= blocks.length - 1}
-              className={`${t.card} ${t.text} border ${t.border} rounded-full px-6 disabled:opacity-50`}>
+            <Button
+              variant="outline"
+              onClick={scrollToNext}
+              disabled={currentBlockIndex >= blocks.length - 1}
+              className={`${t.card} ${t.text} border ${t.border} rounded-full px-6 disabled:opacity-50 hover:scale-105 transition-transform shadow-lg`}
+            >
               Next <SkipForward className="w-5 h-5 ml-2" />
             </Button>
           </motion.div>
         )}
 
         {blocks.length > 0 && (
-          <motion.div initial={{ opacity: 0 }} whileInView={{ opacity: 1 }} viewport={{ once: true }} transition={{ delay: 0.3 }}
-            className={`pt-16 pb-12 flex flex-col items-center border-t ${t.border} mt-10`}>
-            
+          <motion.div
+            initial={{ opacity: 0 }}
+            whileInView={{ opacity: 1 }}
+            viewport={{ once: true }}
+            transition={{ delay: 0.3 }}
+            className={`pt-16 pb-12 flex flex-col items-center border-t ${t.border} mt-10`}
+          >
             <div className="text-center mb-8">
               <p className={`${t.muted} font-bold tracking-widest uppercase text-xs mb-2`}>Module Assimilation Complete</p>
               <div className="flex items-center justify-center gap-6 flex-wrap">
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.accentLight} border ${t.borderAccent || t.border}`}>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.accentLight} border ${t.borderAccent || t.border} shadow-lg`}
+                >
                   <Zap className={`w-5 h-5 ${t.accent}`} />
                   <span className={`font-bold ${t.accent}`}>{totalPoints} pts earned</span>
-                </div>
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border}`}>
+                </motion.div>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border} shadow-lg`}
+                >
                   <CheckCircle2 className="w-5 h-5 text-emerald-500" />
                   <span className={`font-bold ${t.text}`}>{quizzesCorrect}/{quizzesCompleted} correct</span>
-                </div>
-                <div className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border}`}>
+                </motion.div>
+                <motion.div
+                  whileHover={{ scale: 1.05 }}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border} shadow-lg`}
+                >
                   <Clock className={`w-5 h-5 ${t.muted}`} />
                   <span className={`font-bold ${t.text}`}>{formatTime(readingTime)}</span>
-                </div>
+                </motion.div>
               </div>
             </div>
             
-            <Button onClick={completeChapter} className={`h-16 px-12 ${t.accentBg} text-white font-bold text-lg rounded-full transition-all transform hover:scale-105 hover:-translate-y-1 border border-white/20 shadow-xl`}>
-              Begin Mastery Assessment <ChevronRight className="w-6 h-6 ml-2" />
-            </Button>
+            <motion.div
+              whileHover={{ scale: 1.05 }}
+              whileTap={{ scale: 0.95 }}
+            >
+              <Button
+                onClick={completeChapter}
+                className={`h-16 px-12 ${t.accentBg} text-white font-bold text-lg rounded-full transition-all transform hover:-translate-y-1 border border-white/20 shadow-xl`}
+              >
+                Begin Mastery Assessment <ChevronRight className="w-6 h-6 ml-2" />
+              </Button>
+            </motion.div>
             <p className={`mt-4 text-xs ${t.muted}`}>Your progress has been saved automatically</p>
           </motion.div>
         )}
       </main>
 
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-4 py-3 rounded-full bg-white/90 backdrop-blur-xl border border-slate-200 shadow-2xl md:hidden">
-        <FloatingActionButton icon={Bookmark} onClick={() => setShowBookmarksDialog(true)} label="Bookmarks" theme={t} badge={bookmarks.length} />
-        <FloatingActionButton icon={PenLine} onClick={() => setShowNotesDialog(true)} label="Notes" theme={t} badge={notes.length} />
-        <FloatingActionButton icon={Volume2} onClick={() => setIsSpeaking(!isSpeaking)} label="Read Aloud" theme={t} active={isSpeaking} />
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 px-5 py-3 rounded-full bg-white/90 backdrop-blur-xl border border-slate-200 shadow-2xl md:hidden">
+        <FloatingActionButton
+          icon={Bookmark}
+          onClick={() => setShowBookmarksDialog(true)}
+          label="Bookmarks"
+          theme={t}
+          badge={bookmarks.length}
+        />
+        <FloatingActionButton
+          icon={PenLine}
+          onClick={() => setShowNotesDialog(true)}
+          label="Notes"
+          theme={t}
+          badge={notes.length}
+        />
+        <FloatingActionButton
+          icon={Volume2}
+          onClick={() => setIsSpeaking(!isSpeaking)}
+          label="Read Aloud"
+          theme={t}
+          active={isSpeaking}
+        />
       </div>
 
       <Dialog open={showNotesDialog} onOpenChange={setShowNotesDialog}>
         <DialogContent className={`${t.card} border ${t.border} max-w-2xl`}>
           <DialogHeader>
             <DialogTitle className={t.text}>Your Notes</DialogTitle>
-            <DialogDescription className={t.muted}>{notes.length} note{notes.length !== 1 ? 's' : ''} saved for this chapter</DialogDescription>
+            <DialogDescription className={t.muted}>
+              {notes.length} note{notes.length !== 1 ? 's' : ''} saved for this chapter
+            </DialogDescription>
           </DialogHeader>
           <div className="max-h-[400px] overflow-y-auto space-y-3">
             {notes.length === 0 ? (
@@ -1485,7 +1931,9 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
               ))
             )}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setShowNotesDialog(false)}>Close</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowNotesDialog(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -1493,7 +1941,9 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
         <DialogContent className={`${t.card} border ${t.border} max-w-2xl`}>
           <DialogHeader>
             <DialogTitle className={t.text}>Your Bookmarks</DialogTitle>
-            <DialogDescription className={t.muted}>{bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''} saved for this chapter</DialogDescription>
+            <DialogDescription className={t.muted}>
+              {bookmarks.length} bookmark{bookmarks.length !== 1 ? 's' : ''} saved for this chapter
+            </DialogDescription>
           </DialogHeader>
           <div className="max-h-[400px] overflow-y-auto space-y-3">
             {bookmarks.length === 0 ? (
@@ -1502,12 +1952,17 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
               bookmarks.map(bookmark => {
                 const block = blocks.find(b => b.id === bookmark.blockId);
                 return (
-                  <Card key={bookmark.id} className={`${t.bg} border ${t.border} cursor-pointer hover:${t.accentLight} transition-colors`}
-                    onClick={() => { scrollToBlock(bookmark.blockId); setShowBookmarksDialog(false); }}>
+                  <Card
+                    key={bookmark.id}
+                    className={`${t.bg} border ${t.border} cursor-pointer hover:${t.accentLight} transition-colors`}
+                    onClick={() => { scrollToBlock(bookmark.blockId); setShowBookmarksDialog(false); }}
+                  >
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div>
-                          <p className={`text-sm font-semibold ${t.text}`}>{block?.title || `Block ${blocks.findIndex(b => b.id === bookmark.blockId) + 1}`}</p>
+                          <p className={`text-sm font-semibold ${t.text}`}>
+                            {block?.title || `Block ${blocks.findIndex(b => b.id === bookmark.blockId) + 1}`}
+                          </p>
                           <p className={`text-xs ${t.muted}`}>{block?.type}</p>
                         </div>
                         <ChevronRight className={`w-5 h-5 ${t.muted}`} />
@@ -1518,18 +1973,37 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
               })
             )}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setShowBookmarksDialog(false)}>Close</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowBookmarksDialog(false)}>Close</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <div className={`fixed bottom-6 right-6 z-40 hidden md:flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border} shadow-lg`}>
-        <Button variant="ghost" size="sm" onClick={() => setFontSize(Math.max(14, fontSize - 2))} className={`w-8 h-8 p-0 ${t.muted}`}><Minimize2 className="w-4 h-4" /></Button>
-        <span className={`text-xs ${t.muted} w-12 text-center`}>{fontSize}px</span>
-        <Button variant="ghost" size="sm" onClick={() => setFontSize(Math.min(24, fontSize + 2))} className={`w-8 h-8 p-0 ${t.muted}`}><Maximize2 className="w-4 h-4" /></Button>
+      <div className={`fixed bottom-6 right-6 z-40 hidden md:flex items-center gap-2 px-4 py-2 rounded-full ${t.card} border ${t.border} shadow-lg backdrop-blur-md`}>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setFontSize(Math.max(14, fontSize - 2))}
+          className={`w-8 h-8 p-0 ${t.muted} hover:${t.accent}`}
+        >
+          <Minimize2 className="w-4 h-4" />
+        </Button>
+        <span className={`text-xs ${t.muted} w-12 text-center font-mono`}>{fontSize}px</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setFontSize(Math.min(24, fontSize + 2))}
+          className={`w-8 h-8 p-0 ${t.muted} hover:${t.accent}`}
+        >
+          <Maximize2 className="w-4 h-4" />
+        </Button>
       </div>
 
       <style jsx global>{`
-        @keyframes hologram-shine { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+        @keyframes hologram-shine {
+          0% { background-position: 200% 0; }
+          100% { background-position: -200% 0; }
+        }
       `}</style>
     </div>
   );
