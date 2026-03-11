@@ -978,7 +978,7 @@ function HomePage() {
                   </Link>
                   {isWeb && (
                     <a
-                      href="/apk/edubridge-release.apk"
+                      href="/apk/edubridge_v1.0.0.apk"
                       download
                       className={`w-full sm:w-auto h-16 px-10 text-lg rounded-2xl border-2 ${t.border} ${t.card} ${t.text} hover:${t.accentLight} font-bold shadow-sm transition-all flex items-center justify-center gap-2`}
                     >
