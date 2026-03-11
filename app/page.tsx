@@ -253,7 +253,7 @@ const CreatorSection = ({ theme }: { theme: any }) => (
           <ExternalLink className="w-4 h-4" />
         </a>
         <p className={`text-xs ${theme.muted} mt-4`}>
-          Android 8.0+ • 45MB • Free
+          Android 8.0+ • 3MB • Free
         </p>
       </motion.div>
     </div>

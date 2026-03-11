@@ -1,0 +1,9 @@
+{
+  "appId": "com.priyanshu.edubridge",
+  "appName": "EduBridge",
+  "webDir": "out",
+  "server": {
+    "url": "https://edubridge-eight.vercel.app",
+    "cleartext": false
+  }
+}
