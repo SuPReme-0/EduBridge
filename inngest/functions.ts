@@ -1,39 +1,162 @@
-// inngest/functions.ts – Complete updated version for the new orchestrator
+// inngest/functions.ts – Updated with subject/chapter creation and planning
 import { inngest } from './client';
 import { prisma } from '@/lib/db/client';
 import {
   generateChapterContent,
+  generateCurriculumPlan,          // ✅ import the planning function
   type UserProfile,
-  RateLimitError,          // ✅ now exported from orchestrator
+  RateLimitError,
 } from '@/lib/ai/orchestrator';
 import { canSpendTokens, TOKEN_BUDGET } from '@/lib/rate-limit';
 
 // Configuration
-const DAILY_BATCH_SIZE = 5;               // chapters per user per day
-const DELAY_BETWEEN_BATCHES = '24h';       // one day between batches
-const RETRY_DELAY = '24h';                 // when out of tokens, retry next day
+const DAILY_BATCH_SIZE = 5;
+const DELAY_BETWEEN_BATCHES = '24h';
 
 // ============================================================================
-// JOB 1: THE DISPATCHER (splits curriculum into daily batches)
+// Helper: determine target chapters per subject (copied from API route)
+// ============================================================================
+function getTargetChapters(classLevel: string, educationPath: string): number {
+  const levelStr = String(classLevel);
+  let year = 1;
+
+  const match = levelStr.match(/\d+/);
+  if (match) year = parseInt(match[0], 10);
+
+  if (educationPath === 'school') {
+    if (year < 1) year = 1;
+    if (year > 12) year = 12;
+    return Math.floor(8 + (year - 1) * (22 / 11));
+  }
+  if (educationPath === 'diploma') {
+    if (year < 1) year = 1;
+    if (year > 3) year = 3;
+    return 15 + (year - 1) * 5;
+  }
+  if (educationPath === 'bachelor') {
+    if (year < 1) year = 1;
+    if (year > 4) year = 4;
+    return 20 + (year - 1) * 5;
+  }
+  if (educationPath === 'master') {
+    if (year < 1) year = 1;
+    if (year > 2) year = 2;
+    return 25 + (year - 1) * 5;
+  }
+  return 20;
+}
+
+// ============================================================================
+// JOB 1: THE DISPATCHER (creates subjects/chapters, then splits into daily batches)
 // ============================================================================
 export const generateCurriculumJob = inngest.createFunction(
   {
     id: 'curriculum-dispatcher',
     name: 'Dispatch Chapter Generation in Daily Batches',
     retries: 3,
-    concurrency: { limit: 1 }, // one curriculum at a time to avoid overload
+    concurrency: { limit: 1 },
   },
   { event: 'curriculum.generate' },
   async ({ event, step }) => {
-    const { curriculumId, userId, referenceBooks, profile } = event.data as {
+    const {
+      curriculumId,
+      userId,
+      subjects,                // array of subject names
+      extractedSyllabus,
+      referenceBooks,
+      educationPath,
+      classLevel,
+      profile,
+    } = event.data as {
       curriculumId: string;
       userId: string;
+      subjects: string[];
+      extractedSyllabus?: any;
       referenceBooks: string[];
+      educationPath: string;
+      classLevel: string;
       profile: UserProfile;
     };
 
-    // Fetch curriculum structure
-    const curriculum = await step.run('fetch-structure', async () => {
+    // 1. Determine target chapters per subject
+    const targetChaptersPerSubject = getTargetChapters(classLevel, educationPath);
+
+    // 2. For each subject, generate a plan (or fallback) and store in subjectPlans
+    const subjectPlans: Record<string, any> = {};
+
+    for (const subjectName of subjects) {
+      try {
+        const plan = await step.run(`plan-${subjectName}`, async () => {
+          return await generateCurriculumPlan(
+            userId,
+            subjectName,
+            profile.classLevel,
+            referenceBooks,
+            targetChaptersPerSubject
+          );
+        });
+        subjectPlans[subjectName] = plan;
+        console.log(`[Dispatcher] ✅ Plan for ${subjectName}: ${plan.chapters.length} chapters`);
+      } catch (error) {
+        console.error(`[Dispatcher] ⚠️ Plan failed for ${subjectName}, using fallback`, error);
+        // Fallback: create basic chapters from syllabus or generic topics
+        const fallbackTopics = extractedSyllabus?.chapters?.find((c: any) => c.subject === subjectName)?.topics
+          || [`Introduction to ${subjectName}`, `Core Concepts`, `Applications`, `Advanced Topics`];
+        const chapters = [];
+        for (let i = 0; i < targetChaptersPerSubject; i++) {
+          chapters.push({
+            chapterNumber: i + 1,
+            chapterTitle: fallbackTopics[i % fallbackTopics.length] +
+              (i >= fallbackTopics.length ? ` (Part ${Math.floor(i / fallbackTopics.length) + 1})` : ''),
+            keyTopics: [fallbackTopics[i % fallbackTopics.length]],
+            estimatedMinutes: 15,
+            difficulty: i < targetChaptersPerSubject * 0.33 ? 'beginner'
+                     : i < targetChaptersPerSubject * 0.66 ? 'intermediate'
+                     : 'advanced',
+          });
+        }
+        subjectPlans[subjectName] = {
+          chapters,
+          totalEstimatedMinutes: chapters.length * 15,
+          learningObjectives: [`Master ${subjectName}`],
+        };
+      }
+    }
+
+    // 3. Persist subjects and chapters to the database
+    await step.run('persist-structure', async () => {
+      for (let i = 0; i < subjects.length; i++) {
+        const subjectName = subjects[i];
+        const plan = subjectPlans[subjectName];
+        const chapters = plan?.chapters || [];
+
+        await prisma.subject.create({
+          data: {
+            curriculumId,
+            name: subjectName,
+            status: 'PENDING',
+            order: i,
+            chapters: {
+              create: chapters.map((ch: any, idx: number) => ({
+                chapterNumber: ch.chapterNumber || idx + 1,
+                title: ch.chapterTitle || `Chapter ${idx + 1}`,
+                status: 'PENDING',
+                estimatedMinutes: ch.estimatedMinutes || 15,
+                difficultyLevel: 
+                  ch.difficulty === 'beginner' ? 3 :
+                  ch.difficulty === 'intermediate' ? 6 : 9,
+                tags: ch.keyTopics || [],
+                order: idx,
+                mixedContent: null,
+              })),
+            },
+          },
+        });
+      }
+    });
+
+    // 4. Fetch the now‑populated curriculum
+    const curriculum = await step.run('fetch-populated', async () => {
       return await prisma.curriculum.findUnique({
         where: { id: curriculumId },
         include: {
@@ -45,9 +168,9 @@ export const generateCurriculumJob = inngest.createFunction(
         },
       });
     });
-    if (!curriculum) throw new Error('Curriculum not found');
+    if (!curriculum) throw new Error('Curriculum not found after creation');
 
-    // Flatten all chapters with subject info
+    // 5. Flatten all chapters for batching
     const allChapters = curriculum.subjects
       .flatMap((sub) =>
         sub.chapters.map((ch) => ({
@@ -65,11 +188,9 @@ export const generateCurriculumJob = inngest.createFunction(
 
     const totalChapters = allChapters.length;
 
-    // Split into daily batches
+    // 6. Split into daily batches (unchanged)
     for (let i = 0; i < totalChapters; i += DAILY_BATCH_SIZE) {
       const batch = allChapters.slice(i, i + DAILY_BATCH_SIZE);
-
-      // Dispatch this batch
       await step.sendEvent(`batch-${Math.floor(i / DAILY_BATCH_SIZE) + 1}`, {
         name: 'chapter.batch',
         data: {
@@ -87,7 +208,6 @@ export const generateCurriculumJob = inngest.createFunction(
         },
       });
 
-      // If not the last batch, wait 24 hours before next batch
       if (i + DAILY_BATCH_SIZE < totalChapters) {
         await step.sleep(`delay-after-batch-${Math.floor(i / DAILY_BATCH_SIZE) + 1}`, DELAY_BETWEEN_BATCHES);
       }
@@ -105,13 +225,13 @@ export const generateCurriculumJob = inngest.createFunction(
 );
 
 // ============================================================================
-// JOB 2: CHAPTER BATCH PROCESSOR (handles one batch, checks tokens)
+// JOB 2: CHAPTER BATCH PROCESSOR (unchanged)
 // ============================================================================
 export const generateChapterBatchJob = inngest.createFunction(
   {
     id: 'chapter-batch',
     name: 'Process a Daily Batch of Chapters',
-    concurrency: { limit: 5 }, // allow multiple batches from different users concurrently
+    concurrency: { limit: 5 },
   },
   { event: 'chapter.batch' },
   async ({ event, step }) => {
@@ -129,17 +249,12 @@ export const generateChapterBatchJob = inngest.createFunction(
       totalChapters: number;
     };
 
-    // Process chapters in parallel (each will independently check tokens)
     await Promise.all(
       chapters.map(async (ch) => {
-        // Estimate token cost for this chapter (rough)
         const estimatedTokens = TOKEN_BUDGET.perChapter.blueprint +
-          (TOKEN_BUDGET.perChapter.perTopic * 5); // assume 5 topics
-
-        // Check if user has enough tokens for today
+          (TOKEN_BUDGET.perChapter.perTopic * 5);
         const enough = await canSpendTokens(userId, estimatedTokens);
         if (!enough) {
-          // Not enough tokens – reschedule this chapter for tomorrow
           await step.sleep('insufficient-tokens', '24h');
           await step.sendEvent(`retry-${ch.chapterId}`, {
             name: 'chapter.generate',
@@ -155,7 +270,6 @@ export const generateChapterBatchJob = inngest.createFunction(
           return;
         }
 
-        // Enough tokens – send for generation
         await step.sendEvent(`generate-${ch.chapterId}`, {
           name: 'chapter.generate',
           data: {
@@ -164,7 +278,7 @@ export const generateChapterBatchJob = inngest.createFunction(
             referenceBooks,
             subjectName: ch.subjectName,
             chapterTitle: ch.chapterTitle,
-            curriculumId: undefined, // will be fetched from chapter if needed
+            curriculumId: undefined,
             totalChapters,
             chapterOrder: ch.order + 1,
             difficultyLevel: ch.difficultyLevel,
@@ -179,7 +293,7 @@ export const generateChapterBatchJob = inngest.createFunction(
 );
 
 // ============================================================================
-// JOB 3: CHAPTER GENERATOR (actual content generation with rate‑limit handling)
+// JOB 3: CHAPTER GENERATOR (unchanged)
 // ============================================================================
 export const generateChapterJob = inngest.createFunction(
   {
@@ -212,17 +326,14 @@ export const generateChapterJob = inngest.createFunction(
       profile: UserProfile;
     };
 
-    // Pre‑check token availability (rough estimate)
-    const estimatedTokens = 5000; // adjust based on two‑stage expansion
+    const estimatedTokens = 5000;
     const enough = await canSpendTokens(userId, estimatedTokens);
     if (!enough) {
-      // Still not enough? reschedule for tomorrow.
       await step.sleep('token-exhausted', '24h');
       await step.sendEvent(`retry-${chapterId}`, { name: 'chapter.generate', data: event.data });
       return;
     }
 
-    // Fetch chapter context
     const context = await step.run('fetch-chapter-context', async () => {
       const chapter = await prisma.chapter.findUnique({
         where: { id: chapterId },
@@ -247,7 +358,6 @@ export const generateChapterJob = inngest.createFunction(
       return { chapter, profile: dbProfile };
     });
 
-    // Get chapter position
     const { chapterNumber, previousChapterTitle, nextChapterTitle } = await step.run('get-chapter-position', async () => {
       const order = chapterOrder ?? context.chapter.order + 1;
       const allChapters = await prisma.chapter.findMany({
@@ -264,7 +374,6 @@ export const generateChapterJob = inngest.createFunction(
       };
     });
 
-    // Generate content
     let aiResponse;
     try {
       aiResponse = await step.run('run-orchestrator', async () => {
@@ -286,26 +395,16 @@ export const generateChapterJob = inngest.createFunction(
         return result;
       });
     } catch (error: any) {
-      // Handle rate‑limit errors specially
       if (error instanceof RateLimitError) {
-        // Log the rate limit
         console.log(`[Inngest] Rate limit hit for chapter ${chapterId}, retry after ${error.retryAfter}s`);
-
-        // ❌ Do not change status to 'RATE_LIMITED' unless your Prisma enum includes it.
-        // The chapter remains in 'GENERATING' state, and the orchestrator's cache preserves progress.
-
-        // Wait exactly the required time and then reschedule the same event
         await step.sleep('rate-limit-wait', `${error.retryAfter}s`);
         await step.sendEvent(`retry-${chapterId}`, {
           name: 'chapter.generate',
           data: event.data,
         });
-
-        // Return early – this run is considered successful (the real work is deferred)
         return { success: false, rescheduled: true, reason: 'rate_limit' };
       }
 
-      // For other errors, mark as FAILED and rethrow
       await prisma.chapter.update({
         where: { id: chapterId },
         data: { generationProgress: 100, status: 'FAILED', errorMessage: error.message },
@@ -313,7 +412,6 @@ export const generateChapterJob = inngest.createFunction(
       throw error;
     }
 
-    // Save content (token recording is already done inside the orchestrator)
     await step.run('save-mixed-content', async () => {
       const totalMinutes = aiResponse.blocks.reduce((acc: number, block: any) => acc + (block.estimatedReadTime || 5), 0);
 
@@ -328,7 +426,6 @@ export const generateChapterJob = inngest.createFunction(
         },
       });
 
-      // Check if curriculum is fully complete
       const allChapters = await prisma.chapter.findMany({
         where: { subject: { curriculumId: context.chapter.subject.curriculumId } },
         select: { status: true },
@@ -354,7 +451,7 @@ export const generateChapterJob = inngest.createFunction(
 );
 
 // ============================================================================
-// JOB 4: ERROR RECOVERY – now only retries FAILED chapters (rate‑limited ones are handled separately)
+// JOB 4: ERROR RECOVERY (unchanged)
 // ============================================================================
 export const retryFailedChaptersJob = inngest.createFunction(
   {

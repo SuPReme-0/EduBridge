@@ -1,13 +1,12 @@
 import { Ratelimit } from '@upstash/ratelimit';
 import { Redis } from '@upstash/redis';
 
-// Initialize Upstash Redis (reused for token counters)
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL!,
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 });
 
-// Rate limit configurations (unchanged)
+// Existing rate limiters (unchanged)
 export const rateLimiters = {
   profileRead: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(100, '60 s'), analytics: true, prefix: 'ratelimit:profile:read' }),
   profileWrite: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(20, '60 s'), analytics: true, prefix: 'ratelimit:profile:write' }),
@@ -18,10 +17,36 @@ export const rateLimiters = {
   curriculum: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(5, '60 m'), analytics: true, prefix: 'ratelimit:curriculum' }),
   assessment: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(30, '60 m'), analytics: true, prefix: 'ratelimit:assessment' }),
   doubts: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(20, '60 m'), analytics: true, prefix: 'ratelimit:doubts' }),
-  // This is now a fallback; we'll use token budgeting for more precise control
   chapterGeneration: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(100, '1h'), prefix: 'ratelimit:chapter' }),
 };
 
+// 🔥 NEW: Provider‑specific request rate limiters (RPM)
+export const providerRateLimiters = {
+  gemini: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(20, '1 m'),  // Gemini free tier: 20 RPM
+    analytics: true,
+    prefix: 'ratelimit:provider:gemini',
+  }),
+  groq: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(30, '1 m'),   // Groq free tier: 30 RPM
+    analytics: true,
+    prefix: 'ratelimit:provider:groq',
+  }),
+};
+
+// Helper to check provider rate limit (use a global identifier or user ID)
+export async function checkProviderRateLimit(
+  provider: 'gemini' | 'groq',
+  identifier: string = 'global'
+): Promise<{ success: boolean; reset: number }> {
+  const limiter = providerRateLimiters[provider];
+  const result = await limiter.limit(identifier);
+  return { success: result.success, reset: result.reset };
+}
+
+// (Existing helpers unchanged)
 export async function checkRateLimit(limiter: Ratelimit, identifier: string) {
   const result = await limiter.limit(identifier);
   return { success: result.success, remaining: result.remaining, reset: result.reset };
@@ -32,49 +57,35 @@ export function getClientIdentifier(req: Request): string {
   return forwarded ? forwarded.split(',')[0].trim() : req.headers.get('x-real-ip') || 'unknown';
 }
 
-// ============================================================================
-// TOKEN BUDGET UTILITIES (shared across jobs)
-// ============================================================================
+// Token budget (adjust as needed)
 export const TOKEN_BUDGET = {
-  daily: 100000,          // Groq free tier daily limit
-  buffer: 5000,           // safety margin
+  daily: 100000,          // Groq free tier daily limit (increase if using paid)
+  buffer: 5000,
   perChapter: {
-    blueprint: 1200,      // estimated tokens for blueprint (8B model)
-    perTopic: 1500,       // estimated per topic
+    blueprint: 1200,
+    perTopic: 1500,
     maxTopics: 6,
   },
 };
 
-/**
- * Get the Redis key for daily token usage of a user.
- */
+// Token helpers (unchanged)
 function getTokenKey(userId: string): string {
-  const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+  const today = new Date().toISOString().split('T')[0];
   return `tokens:${userId}:${today}`;
 }
 
-/**
- * Check if a user has enough daily tokens for an estimated cost.
- */
 export async function canSpendTokens(userId: string, estimatedTokens: number): Promise<boolean> {
   const key = getTokenKey(userId);
   const used = (await redis.get<number>(key)) || 0;
   return used + estimatedTokens + TOKEN_BUDGET.buffer <= TOKEN_BUDGET.daily;
 }
 
-/**
- * Record actual token usage after a successful API call.
- */
 export async function recordTokenUsage(userId: string, tokensUsed: number) {
   const key = getTokenKey(userId);
   await redis.incrby(key, tokensUsed);
-  // Set expiry to 48 hours so counters auto‑clean
   await redis.expire(key, 60 * 60 * 48);
 }
 
-/**
- * Get the remaining tokens for a user today.
- */
 export async function getRemainingTokens(userId: string): Promise<number> {
   const key = getTokenKey(userId);
   const used = (await redis.get<number>(key)) || 0;

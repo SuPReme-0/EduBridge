@@ -682,77 +682,84 @@ export default function ChapterReaderPage({ params }: { params: Promise<{ id: st
   // FETCH CHAPTER DATA
   // ============================================================================
   const fetchChapterData = useCallback(async (forceNetwork = false) => {
-    if (!id) return;
-    
-    if (!forceNetwork && !navigator.onLine) {
-      const cached = loadFromCache(getCacheKey(id));
-      if (cached?.chapter) {
-        setChapter(cached.chapter);
-        setProfileData(cached.profile);
-        if (cached.chapter.dynamicVibe && THEME_CONFIG[cached.chapter.dynamicVibe]) {
-          setActiveTheme(THEME_CONFIG[cached.chapter.dynamicVibe]);
-        }
-        setUsingCache(true);
-        setLoading(false);
-        return;
+  if (!id) return;
+
+  if (!forceNetwork && !navigator.onLine) {
+    const cached = loadFromCache(getCacheKey(id));
+    if (cached?.chapter) {
+      setChapter(cached.chapter);
+      setProfileData(cached.profile);
+      if (cached.chapter.dynamicVibe && THEME_CONFIG[cached.chapter.dynamicVibe]) {
+        setActiveTheme(THEME_CONFIG[cached.chapter.dynamicVibe]);
       }
+      setUsingCache(true);
+      setLoading(false);
+      return;
     }
-    
-    try {
-      const res = await fetch(`/api/chapter/${id}`);
-      const data = await res.json();
-      
-      if (!res.ok) throw new Error(data.error);
-      
-      if (data.chapter?.status === 'GENERATING') {
-        setIsGenerating(true);
-        setGenerationProgress(10);
-        setGenerationMessage('Initializing generation...');
-        startPolling();
-        return;
-      }
-      
-      setChapter(data.chapter);
-      setProfileData(data.profile);
-      
-      const dynamicVibe = data.profile?.currentVibe || data.chapter?.dynamicVibe || 'minimalist';
-      if (THEME_CONFIG[dynamicVibe]) {
-        setActiveTheme(THEME_CONFIG[dynamicVibe]);
-      }
-      
-      saveToCache(getCacheKey(id), { chapter: data.chapter, profile: data.profile });
-      setUsingCache(false);
-      
-      const savedNotes = loadFromCache(getNotesKey(id));
-      const savedBookmarks = loadFromCache(getBookmarksKey(id));
-      const savedProgress = loadFromCache(getProgressKey(id));
-      
-      if (savedNotes) setNotes(savedNotes);
-      if (savedBookmarks) setBookmarks(savedBookmarks);
-      if (savedProgress) {
-        setQuizState(savedProgress.quizState || {});
-        setCompletedBlocks(new Set(savedProgress.completedBlocks || []));
-        setTotalPoints(savedProgress.totalPoints || 0);
-        setCorrectAnswers(savedProgress.correctAnswers || 0);
-        setReadingTime(savedProgress.readingTime || 0);
-      }
-    } catch (err: any) {
-      const cached = loadFromCache(getCacheKey(id));
-      if (cached?.chapter) {
-        setChapter(cached.chapter);
-        setProfileData(cached.profile);
-        if (cached.chapter.dynamicVibe && THEME_CONFIG[cached.chapter.dynamicVibe]) {
-          setActiveTheme(THEME_CONFIG[cached.chapter.dynamicVibe]);
-        }
-        setUsingCache(true);
-        setError('');
-      } else {
-        setError(err.message || 'Failed to load chapter');
-      }
-    } finally {
-      if (!isGenerating) setLoading(false);
+  }
+
+  try {
+    const res = await fetch(`/api/chapter/${id}`);
+    const data = await res.json();
+
+    if (!res.ok) throw new Error(data.error);
+
+    // ✅ Start polling if chapter is not yet completed or failed
+    if (data.chapter?.status === 'PENDING' || data.chapter?.status === 'GENERATING') {
+      setIsGenerating(true);
+      setGenerationProgress(data.chapter?.status === 'PENDING' ? 5 : 10);
+      setGenerationMessage(
+        data.chapter?.status === 'PENDING'
+          ? 'Queuing generation...'
+          : 'Initializing generation...'
+      );
+      startPolling();
+      return;
     }
-  }, [id, getCacheKey, getNotesKey, getBookmarksKey, getProgressKey, loadFromCache, saveToCache, startPolling, isGenerating]);
+
+    // Chapter is already completed
+    setChapter(data.chapter);
+    setProfileData(data.profile);
+
+    const dynamicVibe = data.profile?.currentVibe || data.chapter?.dynamicVibe || 'minimalist';
+    if (THEME_CONFIG[dynamicVibe]) {
+      setActiveTheme(THEME_CONFIG[dynamicVibe]);
+    }
+
+    saveToCache(getCacheKey(id), { chapter: data.chapter, profile: data.profile });
+    setUsingCache(false);
+
+    // Restore local notes/bookmarks/progress
+    const savedNotes = loadFromCache(getNotesKey(id));
+    const savedBookmarks = loadFromCache(getBookmarksKey(id));
+    const savedProgress = loadFromCache(getProgressKey(id));
+
+    if (savedNotes) setNotes(savedNotes);
+    if (savedBookmarks) setBookmarks(savedBookmarks);
+    if (savedProgress) {
+      setQuizState(savedProgress.quizState || {});
+      setCompletedBlocks(new Set(savedProgress.completedBlocks || []));
+      setTotalPoints(savedProgress.totalPoints || 0);
+      setCorrectAnswers(savedProgress.correctAnswers || 0);
+      setReadingTime(savedProgress.readingTime || 0);
+    }
+  } catch (err: any) {
+    const cached = loadFromCache(getCacheKey(id));
+    if (cached?.chapter) {
+      setChapter(cached.chapter);
+      setProfileData(cached.profile);
+      if (cached.chapter.dynamicVibe && THEME_CONFIG[cached.chapter.dynamicVibe]) {
+        setActiveTheme(THEME_CONFIG[cached.chapter.dynamicVibe]);
+      }
+      setUsingCache(true);
+      setError('');
+    } else {
+      setError(err.message || 'Failed to load chapter');
+    }
+  } finally {
+    if (!isGenerating) setLoading(false);
+  }
+}, [id, getCacheKey, getNotesKey, getBookmarksKey, getProgressKey, loadFromCache, saveToCache, startPolling, isGenerating]);
 
   useEffect(() => {
     if (id) fetchChapterData();

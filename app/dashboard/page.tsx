@@ -784,7 +784,7 @@ function DashboardContent() {
               <div className="p-6 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {sub.chapters.map((ch, idx) => {
                   const isCompleted = ch.progress?.some(p => p.completedAt !== null) ?? false;
-                  const isLocked = ch.status === 'PENDING' || (idx > 0 && !(sub.chapters[idx - 1].progress?.some(p => p.completedAt !== null) ?? false));
+                  const isLocked = ch.status !== 'COMPLETED' || (idx > 0 && !(sub.chapters[idx - 1].progress?.some(p => p.completedAt !== null) ?? false));
                   
                   return (
                     <Link href={isLocked ? '#' : `/lesson/chapter/${ch.id}`} key={ch.id}>

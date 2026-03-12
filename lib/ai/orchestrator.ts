@@ -2,6 +2,7 @@
 import { generateObject } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
+import { checkProviderRateLimit } from '@/lib/rate-limit';
 import { z } from 'zod';
 import crypto from 'crypto';
 import { rateLimiters, checkRateLimit, recordTokenUsage } from '@/lib/rate-limit';
@@ -42,8 +43,8 @@ async function callWithFallback<T>(
   fn: (provider: 'groq' | 'google', model: string) => Promise<T>,
   taskType: 'heavy' | 'light' = 'light',
   userId?: string,
-  retriesPerProvider = 3,               // increased for resilience
-  baseDelayMs = 3000                     // increased base delay
+  retriesPerProvider = 5,    // increased from 3
+  baseDelayMs = 5000          // increased from 3000
 ): Promise<T> {
   const providers: Array<'google' | 'groq'> = ['google', 'groq'];
   let lastRateLimitError: { retryAfter: number } | null = null;
@@ -54,7 +55,13 @@ async function callWithFallback<T>(
       try {
         const model = MODELS[taskType][provider];
         // Small jitter to spread requests
-        await new Promise(r => setTimeout(r, Math.random() * 300));
+        const providerKey = provider === 'google' ? 'gemini' : 'groq'; // map provider name
+        const { success, reset } = await checkProviderRateLimit(providerKey, userId || 'global');
+        if (!success) {
+          const waitMs = Math.max(0, reset * 1000 - Date.now()) + 1000;
+          console.warn(`[RateLimit] ${provider} limit exceeded, waiting ${Math.round(waitMs/1000)}s`);
+          await new Promise(r => setTimeout(r, waitMs));
+        }
         return await fn(provider, model);
       } catch (error: any) {
         attempt++;
@@ -748,7 +755,7 @@ async function generateBlockPlan(
   userId: string,
   topic: any,
   context: any
-): Promise<Array<{ type: string; estimatedTokens: number }>> {
+): Promise<{ blocks: Array<{ type: string; estimatedTokens: number }> }> {
   return await callWithFallback(async (provider, model) => {
     const { object, usage } = await withTimeout(
       generateObject({
@@ -756,12 +763,14 @@ async function generateBlockPlan(
         providerOptions: provider === 'groq' ? {
           groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
         } : undefined,
-        system: 'Plan content blocks for a topic. Return JSON array.',
-        prompt: `Topic: ${topic.topicTitle}. Difficulty: ${context.difficultyLevel}. Plan 5-7 blocks mixing: story, fact, quiz, definition, image, code, summary. Return: [{type, estimatedTokens}]`,
-        schema: z.array(z.object({
-          type: z.enum(['story', 'fact', 'quiz', 'definition', 'image', 'code', 'summary']),
-          estimatedTokens: z.number().min(100).max(2000),
-        })).min(4).max(7),
+        system: 'Plan content blocks for a topic. Return JSON object with a "blocks" array.',
+        prompt: `Topic: ${topic.topicTitle}. Difficulty: ${context.difficultyLevel}. Plan 5-7 blocks mixing: story, fact, quiz, definition, image, code, summary. Return: { "blocks": [ { "type": "...", "estimatedTokens": number } ] }`,
+        schema: z.object({
+          blocks: z.array(z.object({
+            type: z.enum(['story', 'fact', 'quiz', 'definition', 'image', 'code', 'summary']),
+            estimatedTokens: z.number().min(100).max(2000),
+          })).min(4).max(7)
+        }),
         temperature: 0.2,
       }),
       25000
@@ -823,7 +832,7 @@ async function generateIndividualBlock(
         system: config.system,
         prompt: config.prompt,
         schema: ContentBlockSchema,
-        temperature: blockType === 'story' ? 0.7 : 0.3,
+        temperature: blockType === 'story' ? 0.5 : 0.2,
       }),
       blockType === 'story' ? 45000 : 30000
     );
@@ -855,25 +864,29 @@ async function expandTopic(
 ): Promise<any[]> {
   const blockPlan = await generateBlockPlan(userId, topic, context);
 
-  const blocks: any[] = [];
-  for (const plan of blockPlan) {
-    try {
-      const block = await generateIndividualBlock(
-        userId,
-        plan.type,
-        topic,
-        context,
-        context.storyContext
-      );
-      if (block) blocks.push({ id: crypto.randomUUID(), ...block });
-    } catch (error) {
-      console.warn(`[Orchestrator] Block ${plan.type} failed, skipping.`, error);
-    }
-    // Increased delay to avoid hitting request-per-minute limits
-    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500));
+const blocks: any[] = [];
+for (const plan of blockPlan.blocks) {  // <-- note the .blocks
+  try {
+    const block = await generateIndividualBlock(
+      userId,
+      plan.type,
+      topic,
+      context,
+      context.storyContext
+    );
+    if (block) blocks.push({ id: crypto.randomUUID(), ...block });
+  } catch (error) {
+    console.warn(`[Orchestrator] Block ${plan.type} failed, skipping.`, error);
   }
+  // Increased delay to avoid hitting request-per-minute limits
+  await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500));
+}
 
-  return blocks;
+if (blocks.length === 0) {
+  throw new Error(`No blocks could be generated for topic "${topic.topicTitle}"`);
+}
+
+return blocks;
 }
 
 // ============================================================================
