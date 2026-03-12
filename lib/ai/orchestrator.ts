@@ -1,3 +1,4 @@
+// lib/ai/orchestrator.ts – Fully upgraded, token‑efficient, production‑ready with rate‑limit resilience
 import { generateObject } from 'ai';
 import { createGroq } from '@ai-sdk/groq';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
@@ -8,92 +9,129 @@ import { rateLimiters, checkRateLimit, recordTokenUsage } from '@/lib/rate-limit
 const groq = createGroq({ apiKey: process.env.GROQ_API_KEY });
 const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_API_KEY });
 
-// Model mapping for different tasks
+// ============================================================================
+// MODEL MAPPING – heavy for narrative, light for everything else
+// ============================================================================
 const MODELS = {
-  // Heavy tasks (e.g., topic expansion, blueprint generation)
   heavy: {
     groq: 'llama-3.3-70b-versatile',
     google: 'gemini-2.5-pro',
   },
-  // Light tasks (e.g., concept extraction, evaluation)
   light: {
     groq: 'llama-3.1-8b-instant',
     google: 'gemini-2.5-flash',
   },
-};
+} as const;
 
 // ============================================================================
-// 1. HELPER: CALL WITH FALLBACK (Gemini first, then Groq)
+// 1. CUSTOM ERROR FOR RATE LIMITS (so Inngest can retry with delay)
+// ============================================================================
+export class RateLimitError extends Error {
+  retryAfter: number; // seconds
+  constructor(message: string, retryAfter: number) {
+    super(message);
+    this.name = 'RateLimitError';
+    this.retryAfter = retryAfter;
+  }
+}
+
+// ============================================================================
+// 2. SMART FALLBACK WITH TOKEN BUDGETING & RETRY-AFTER HANDLING
 // ============================================================================
 async function callWithFallback<T>(
   fn: (provider: 'groq' | 'google', model: string) => Promise<T>,
   taskType: 'heavy' | 'light' = 'light',
-  retriesPerProvider = 2,
-  baseDelayMs = 2000
+  userId?: string,
+  retriesPerProvider = 3,               // increased for resilience
+  baseDelayMs = 3000                     // increased base delay
 ): Promise<T> {
-  // Prioritize Google (Gemini) first, then Groq
-  const providers: Array<'groq' | 'google'> = ['google', 'groq'];
-  
+  const providers: Array<'google' | 'groq'> = ['google', 'groq'];
+  let lastRateLimitError: { retryAfter: number } | null = null;
+
   for (const provider of providers) {
     let attempt = 0;
     while (attempt <= retriesPerProvider) {
       try {
         const model = MODELS[taskType][provider];
+        // Small jitter to spread requests
+        await new Promise(r => setTimeout(r, Math.random() * 300));
         return await fn(provider, model);
       } catch (error: any) {
         attempt++;
+
+        // Fatal schema errors – throw immediately
         const isValidationError =
           error.name === 'TypeValidationError' ||
           error.name === 'ZodError' ||
           error?.statusCode === 400;
-
         if (isValidationError) {
-          console.error(`[Orchestrator] Fatal Schema Error on ${provider}.`, error);
-          throw error; // validation errors are not retryable
+          console.error(`[Orchestrator] Fatal schema error on ${provider}.`, error);
+          throw error;
         }
 
+        // Determine if the error is retryable
         const isRetryable =
           error?.statusCode === 429 ||
           (error?.statusCode && error.statusCode >= 500) ||
           error.code === 'ETIMEDOUT' ||
           error.code === 'ECONNRESET';
 
+        // Capture rate‑limit info
+        if (error?.statusCode === 429) {
+          const retryAfter = error?.responseHeaders?.['retry-after'];
+          if (retryAfter) {
+            const seconds = parseInt(retryAfter);
+            if (!lastRateLimitError || seconds > lastRateLimitError.retryAfter) {
+              lastRateLimitError = { retryAfter: seconds };
+            }
+          }
+        }
+
         if (!isRetryable) {
-          // Non-retryable error for this provider, break out to try next provider
-          console.warn(`[Orchestrator] Non-retryable error on ${provider}, switching provider.`, error);
-          break; // exit while loop, move to next provider
+          console.warn(`[Orchestrator] Non-retryable error on ${provider}, switching.`, error);
+          break; // try next provider
         }
 
         if (attempt > retriesPerProvider) {
-          console.warn(`[Orchestrator] ${provider} failed after ${retriesPerProvider} retries, switching provider.`);
-          break; // exit while loop, move to next provider
+          console.warn(`[Orchestrator] ${provider} exhausted retries, switching.`);
+          break;
         }
 
-        // Retry with exponential backoff
-        const waitMs = Math.min(baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000, 60000);
+        // Use retry-after header if present, otherwise exponential backoff + jitter
+        const retryAfter = error?.responseHeaders?.['retry-after'];
+        const waitMs = retryAfter
+          ? Math.min(parseInt(retryAfter) * 1000 + Math.random() * 2000, 60000)
+          : Math.min(baseDelayMs * Math.pow(2, attempt - 1) + Math.random() * 1000, 60000);
+
         console.warn(`[Orchestrator] ${provider} retry ${attempt}/${retriesPerProvider} in ${Math.round(waitMs / 1000)}s...`);
         await new Promise(resolve => setTimeout(resolve, waitMs));
       }
     }
   }
-  
-  throw new Error('All providers failed after exhausting retries.');
+
+  // If we exit because of rate limits, throw a special error
+  if (lastRateLimitError) {
+    throw new RateLimitError(
+      'Rate limit exceeded on all providers',
+      lastRateLimitError.retryAfter
+    );
+  }
+
+  throw new Error('All providers failed after exhausting retries and fallbacks.');
 }
 
 // ============================================================================
-// 2. TIMEOUT WRAPPER
+// 3. TIMEOUT WRAPPER
 // ============================================================================
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
     promise,
-    new Promise<T>((_, reject) => 
-      setTimeout(() => reject(new Error(`Operation timed out after ${ms}ms`)), ms)
-    )
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(`Timeout after ${ms}ms`)), ms)),
   ]);
 }
 
 // ============================================================================
-// 3. NARRATIVE ELEMENTS
+// 4. NARRATIVE ELEMENTS (unchanged from original)
 // ============================================================================
 const NARRATIVE_TROPES = [
   'A cyberpunk detective solving a corporate conspiracy',
@@ -130,40 +168,40 @@ const STORY_TONES = [
 ] as const;
 
 // ============================================================================
-// 4. SCHEMAS (unchanged)
+// 5. SCHEMAS – with case‑insensitive type handling (FIXED)
 // ============================================================================
 const TopicSchema = z.object({
   topicNumber: z.number(),
-  topicTitle: z.string(),
-  pedagogicalGoal: z.string(),
-  narrativeBeat: z.string(),
-  estimatedMinutes: z.number(),
+  topicTitle: z.string().max(100),
+  pedagogicalGoal: z.string().max(200),
+  narrativeBeat: z.string().max(150),
+  estimatedMinutes: z.number().min(5).max(20),
 });
 
 const ChapterBlueprintSchema = z.object({
-  topics: z.array(TopicSchema).min(3).max(8),
+  topics: z.array(TopicSchema).min(3).max(6),
   totalEstimatedMinutes: z.number(),
 });
 
 const BaseQuizSchema = z.object({
   id: z.string(),
-  prompt: z.string(),
-  explanation: z.string(),
+  prompt: z.string().max(300),
+  explanation: z.string().max(400),
   difficulty: z.enum(['easy', 'medium', 'hard']),
-  points: z.number(),
-  hint: z.string().optional(),
+  points: z.number().min(1).max(20),
+  hint: z.string().max(150).optional(),
 });
 
 const SingleMCQSchema = BaseQuizSchema.extend({
   type: z.literal('single'),
-  options: z.array(z.string()).min(2).max(6),
+  options: z.array(z.string().max(100)).min(2).max(4),
   correctAnswer: z.string(),
 });
 
 const MultipleMCQSchema = BaseQuizSchema.extend({
   type: z.literal('multiple'),
-  options: z.array(z.string()).min(3).max(8),
-  correctAnswer: z.array(z.string()).min(2).max(4),
+  options: z.array(z.string().max(100)).min(3).max(5),
+  correctAnswer: z.array(z.string()).min(2).max(3),
 });
 
 const TrueFalseSchema = BaseQuizSchema.extend({
@@ -174,8 +212,8 @@ const TrueFalseSchema = BaseQuizSchema.extend({
 
 const ShortAnswerSchema = BaseQuizSchema.extend({
   type: z.literal('short'),
-  correctAnswer: z.string(),
-  keywords: z.array(z.string()).optional(),
+  correctAnswer: z.string().max(200),
+  keywords: z.array(z.string().max(30)).optional(),
 });
 
 const QuizUnionSchema = z.union([
@@ -186,91 +224,99 @@ const QuizUnionSchema = z.union([
 ]);
 
 const CodeDataSchema = z.object({
-  language: z.string(),
-  code: z.string(),
-  output: z.string().optional(),
+  language: z.string().max(20),
+  code: z.string().max(2000),
+  output: z.string().max(500).optional(),
 });
 
 const DefinitionDataSchema = z.object({
-  term: z.string(),
-  definition: z.string(),
-  example: z.string().optional(),
+  term: z.string().max(50),
+  definition: z.string().max(300),
+  example: z.string().max(200).optional(),
 });
 
 const MetadataSchema = z.object({
   readTime: z.number().optional(),
   difficulty: z.string().optional(),
-  tags: z.array(z.string()).optional(),
+  tags: z.array(z.string().max(20)).max(5).optional(),
 }).optional();
 
-const ContentBlockSchema = z.discriminatedUnion('type', [
-  z.object({
-    type: z.literal('story'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    content: z.string().describe('Markdown text. MUST be long and detailed (3+ paragraphs for stories).'),
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('fact'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    content: z.string(),
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('image'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    content: z.string().optional(),
-    imagePrompt: z.string().optional(),
-    imageData: z.object({
-      url: z.string(),
-      caption: z.string().optional(),
-      source: z.string().optional(),
-    }).optional(),
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('quiz'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    quizData: QuizUnionSchema,
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('definition'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    definitionData: DefinitionDataSchema,
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('code'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    codeData: CodeDataSchema,
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-  z.object({
-    type: z.literal('summary'),
-    id: z.string().optional(),
-    title: z.string().optional(),
-    content: z.string(),
-    estimatedReadTime: z.number().optional(),
-    metadata: MetadataSchema,
-  }),
-]);
+// FIXED: Use z.preprocess to lowercase the type before discriminated union
+const ContentBlockSchema = z.preprocess(
+  (val: any) => {
+    if (typeof val === 'object' && val !== null && typeof val.type === 'string') {
+      return { ...val, type: val.type.toLowerCase() };
+    }
+    return val;
+  },
+  z.discriminatedUnion('type', [
+    z.object({
+      type: z.literal('story'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      content: z.string().describe('Markdown. Stories: 3+ paragraphs.').max(3000),
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('fact'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      content: z.string().max(1500),
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('image'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      content: z.string().max(300).optional(),
+      imagePrompt: z.string().max(400).optional(),
+      imageData: z.object({
+        url: z.string(),
+        caption: z.string().max(200).optional(),
+        source: z.string().max(100).optional(),
+      }).optional(),
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('quiz'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      quizData: QuizUnionSchema,
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('definition'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      definitionData: DefinitionDataSchema,
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('code'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      codeData: CodeDataSchema,
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+    z.object({
+      type: z.literal('summary'),
+      id: z.string().optional(),
+      title: z.string().max(100).optional(),
+      content: z.string().max(800),
+      estimatedReadTime: z.number().optional(),
+      metadata: MetadataSchema,
+    }),
+  ])
+);
 
-// Allow 3-12 blocks to accommodate AI variability
 const TopicExpansionSchema = z.object({
-  blocks: z.array(ContentBlockSchema).min(3).max(12),
+  blocks: z.array(ContentBlockSchema).min(4).max(8),
 });
 
 export type UserProfile = {
@@ -295,19 +341,53 @@ export type GenerateChapterParams = {
 };
 
 // ============================================================================
-// 5. CACHE TYPES AND IN-MEMORY STORE
+// 6. ENHANCED STORY CONTEXT (richer narrative memory)
 // ============================================================================
-type StoryContext = {
+export type StoryContext = {
+  // Basic (kept for backward compatibility with original cache)
   characters: string[];
   locations: string[];
   unresolvedThreads: string[];
   lastEvents: string;
-  topicSummaries: string[]; // Keep last 3 summaries to avoid overflow
+  topicSummaries: string[];
+
+  // Enhanced fields for deeper storytelling
+  mainCharacters: Array<{ name: string; role: string; traits: string[]; arc: string[] }>;
+  supportingCharacters: string[];
+  detailedLocations: Array<{ name: string; description: string }>;
+  worldRules: string[];
+  overarchingGoal: string;
+  currentArc: string;
+  emotionalTone: string;
+  pacing: 'slow' | 'medium' | 'fast';
+  keyConceptsIntroduced: string[];
+  conceptsToReinforce: string[];
+  recentEvents: string[]; // last 3 events
+};
+
+const DEFAULT_STORY_CONTEXT: StoryContext = {
+  characters: [],
+  locations: [],
+  unresolvedThreads: [],
+  lastEvents: '',
+  topicSummaries: [],
+  mainCharacters: [],
+  supportingCharacters: [],
+  detailedLocations: [],
+  worldRules: [],
+  overarchingGoal: '',
+  currentArc: '',
+  emotionalTone: 'neutral',
+  pacing: 'medium',
+  keyConceptsIntroduced: [],
+  conceptsToReinforce: [],
+  recentEvents: [],
 };
 
 type ChapterCache = {
   blueprint?: z.infer<typeof ChapterBlueprintSchema>;
   context?: StoryContext;
+  lastCompletedTopicIndex?: number;   // index of the last successfully completed topic
   expiresAt: number;
 };
 
@@ -315,7 +395,7 @@ const chapterCache = new Map<string, ChapterCache>();
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 // ============================================================================
-// 6. KEY TOPIC EXTRACTOR – with fallback
+// 7. KEY TOPIC EXTRACTOR – with fallback (unchanged from original)
 // ============================================================================
 function getDefaultConceptsForSubject(subjectName: string, classLevel: number): {
   concepts: string[];
@@ -365,7 +445,7 @@ export async function extractBookConcepts(
   classLevel: number
 ): Promise<{ concepts: string[]; foundationalTopics: string[]; advancedTopics: string[] }> {
   console.log(`[Orchestrator] Extracting concepts from ${bookTitles.length} books for ${subjectName}...`);
-  
+
   if (!bookTitles.length) {
     const defaults = getDefaultConceptsForSubject(subjectName, classLevel);
     return {
@@ -381,12 +461,9 @@ export async function extractBookConcepts(
         generateObject({
           model: provider === 'groq' ? groq(model) : google(model),
           providerOptions: provider === 'groq' ? {
-            groq: {
-              structuredOutputs: false,
-              response_format: { type: 'json_object' },
-            },
+            groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
           } : undefined,
-          system: `You are an expert curriculum designer. Extract key concepts from book titles.`,
+          system: 'You are an expert curriculum designer. Extract key concepts from book titles.',
           prompt: `Extract key concepts from these reference books for ${subjectName} (Class ${classLevel}):
 Books: ${bookTitles.join(', ')}
 Return a JSON object with:
@@ -404,7 +481,7 @@ Return a JSON object with:
       );
       if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
       return object;
-    }, 'light'); // light task
+    }, 'light', userId);
 
     return result;
   } catch (error) {
@@ -417,8 +494,9 @@ Return a JSON object with:
     };
   }
 }
+
 // ============================================================================
-// 7. CURRICULUM PLANNER – with improved prompt and fallback
+// 8. CURRICULUM PLANNER – with improved prompt and fallback (TypeScript error fixed)
 // ============================================================================
 export async function generateCurriculumPlan(
   userId: string,
@@ -438,21 +516,18 @@ export async function generateCurriculumPlan(
   learningObjectives: string[];
 }> {
   console.log(`[Orchestrator] Planning ${totalChapters}-chapter curriculum for ${subjectName}...`);
-  
+
   const bookConcepts = await extractBookConcepts(userId, referenceBooks, subjectName, classLevel);
-  
+
   try {
     const plan = await callWithFallback(async (provider, model) => {
       const { object, usage } = await withTimeout(
         generateObject({
           model: provider === 'groq' ? groq(model) : google(model),
           providerOptions: provider === 'groq' ? {
-            groq: {
-              structuredOutputs: false,
-              response_format: { type: 'json_object' },
-            },
+            groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
           } : undefined,
-          system: `You are the EduBridge Master Architect. Create a comprehensive curriculum plan.`,
+          system: 'You are the EduBridge Master Architect. Create a comprehensive curriculum plan.',
           prompt: `Create a ${totalChapters}-chapter curriculum plan for ${subjectName} (Class ${classLevel}).
 
 The response MUST be a JSON object with the following exact structure:
@@ -489,24 +564,24 @@ Return ONLY the JSON object. Do not include any explanation or markdown.`,
             totalEstimatedMinutes: z.number(),
             learningObjectives: z.array(z.string()),
           }),
-          temperature: 0.2, // lower temperature for deterministic output
+          temperature: 0.2,
         }),
         60000
       );
       if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
       return object;
-    }, 'light'); // light task
+    }, 'light', userId);
 
     console.log(`[Orchestrator] ✅ Generated ${plan.chapters.length} chapter plan for ${subjectName}`);
     return plan;
   } catch (error) {
     console.error(`[Orchestrator] ⚠️ All providers failed to generate a valid plan. Falling back to default plan.`, error);
-    
+
     // Fallback: generate a simple plan from default concepts
     const defaults = getDefaultConceptsForSubject(subjectName, classLevel);
     const chapterCount = Math.min(totalChapters, defaults.concepts.length);
     const chapters = Array.from({ length: chapterCount }, (_, i) => {
-      const difficulty: 'beginner' | 'intermediate' | 'advanced' = 
+      const difficulty: 'beginner' | 'intermediate' | 'advanced' =
         i < chapterCount * 0.33 ? 'beginner' :
         i < chapterCount * 0.66 ? 'intermediate' : 'advanced';
       return {
@@ -523,7 +598,7 @@ Return ONLY the JSON object. Do not include any explanation or markdown.`,
       `Apply ${subjectName} principles to solve problems.`,
       `Understand the real-world applications of ${subjectName}.`,
     ];
-    
+
     console.log(`[Orchestrator] ✅ Generated fallback plan with ${chapters.length} chapters for ${subjectName}`);
     return {
       chapters,
@@ -534,7 +609,7 @@ Return ONLY the JSON object. Do not include any explanation or markdown.`,
 }
 
 // ============================================================================
-// 8. STORY CONTEXT UPDATER – with fallback
+// 9. STORY CONTEXT UPDATER – enhanced version (FIXED)
 // ============================================================================
 async function updateStoryContext(
   userId: string,
@@ -553,20 +628,25 @@ async function updateStoryContext(
 You are a story summarizer. Given the previous story state and new story content, extract updates.
 
 Previous state:
-- Characters: ${previousContext.characters.join(', ') || 'none'}
-- Locations: ${previousContext.locations.join(', ') || 'none'}
+- Main characters: ${previousContext.mainCharacters.map(c => c.name).join(', ') || 'none'}
+- Supporting characters: ${previousContext.supportingCharacters.join(', ') || 'none'}
+- Locations: ${previousContext.detailedLocations.map(l => l.name).join(', ') || 'none'}
 - Unresolved threads: ${previousContext.unresolvedThreads.join(', ') || 'none'}
 - Last events: ${previousContext.lastEvents || 'story begins'}
+- Emotional tone: ${previousContext.emotionalTone}
 
 New story content for topic "${topicTitle}":
-${storyBlocks}
+${storyBlocks.slice(0, 2000)}  // limit context length
 
 Return a JSON object with:
-- "newCharacters": array of character names introduced (if any)
-- "newLocations": array of location names introduced
+- "newMainCharacters": array of {name, role, traits} (new main characters introduced)
+- "newSupportingCharacters": array of names
+- "newLocations": array of {name, description}
 - "updatedThreads": array of unresolved plot threads (keep previous ones, add new, remove resolved)
 - "latestEvents": a one‑sentence summary of what just happened
-- "topicSummary": a one‑line summary of this topic's educational + narrative contribution
+- "emotionalTone": string (overall tone after this content)
+- "conceptLearned": string (one key educational concept from this topic)
+- "topicSummary": a one‑line summary of this topic's narrative contribution
 `;
 
   const result = await callWithFallback(async (provider, model) => {
@@ -574,17 +654,24 @@ Return a JSON object with:
       generateObject({
         model: provider === 'groq' ? groq(model) : google(model),
         providerOptions: provider === 'groq' ? {
-          groq: {
-            structuredOutputs: false,
-            response_format: { type: 'json_object' },
-          },
+          groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
         } : undefined,
         schema: z.object({
-          newCharacters: z.array(z.string()),
-          newLocations: z.array(z.string()),
-          updatedThreads: z.array(z.string()),
-          latestEvents: z.string(),
-          topicSummary: z.string(),
+          newMainCharacters: z.array(z.object({
+            name: z.string(),
+            role: z.string(),
+            traits: z.array(z.string()),
+          })).max(2),
+          newSupportingCharacters: z.array(z.string()).max(3),
+          newLocations: z.array(z.object({
+            name: z.string(),
+            description: z.string().max(200),
+          })).max(2),
+          updatedThreads: z.array(z.string()).max(5),
+          latestEvents: z.string().max(200),
+          emotionalTone: z.string(),
+          conceptLearned: z.string().max(100),
+          topicSummary: z.string().max(150),
         }),
         prompt,
         temperature: 0.3,
@@ -593,28 +680,158 @@ Return a JSON object with:
     );
     if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
     return object;
-  }, 'light'); // light task
+  }, 'light', userId);
 
+  // Add empty arc array to new main characters
+  const newMainChars = result.newMainCharacters.map(c => ({ ...c, arc: [] }));
+  const updatedMainChars = [...previousContext.mainCharacters, ...newMainChars].slice(0, 8);
+
+  const updatedRecentEvents = [...previousContext.recentEvents, result.latestEvents].slice(-3);
+
+  // Merge updates into previous context
   const updated = {
-    characters: [...new Set([...previousContext.characters, ...result.newCharacters])],
-    locations: [...new Set([...previousContext.locations, ...result.newLocations])],
+    // Basic fields
+    characters: [...new Set([...previousContext.characters, ...newMainChars.map(c => c.name), ...result.newSupportingCharacters])],
+    locations: [...new Set([...previousContext.locations, ...result.newLocations.map(l => l.name)])],
     unresolvedThreads: result.updatedThreads,
     lastEvents: result.latestEvents,
     topicSummaries: [...previousContext.topicSummaries, result.topicSummary].slice(-3),
+
+    // Enhanced fields
+    mainCharacters: updatedMainChars,
+    supportingCharacters: [...previousContext.supportingCharacters, ...result.newSupportingCharacters].slice(0, 10),
+    detailedLocations: [...previousContext.detailedLocations, ...result.newLocations].slice(0, 6),
+    worldRules: previousContext.worldRules,
+    overarchingGoal: previousContext.overarchingGoal,
+    currentArc: previousContext.currentArc,
+    emotionalTone: result.emotionalTone,
+    pacing: previousContext.pacing,
+    keyConceptsIntroduced: [...previousContext.keyConceptsIntroduced, result.conceptLearned].slice(0, 10),
+    conceptsToReinforce: previousContext.conceptsToReinforce,
+    recentEvents: updatedRecentEvents,
   };
 
+  // Trim string fields to avoid overflow
   return {
-    characters: updated.characters.map((c: string) => c.substring(0, 100)),
-    locations: updated.locations.map((l: string) => l.substring(0, 100)),
-    unresolvedThreads: updated.unresolvedThreads.map((t: string) => t.substring(0, 200)),
+    ...updated,
+    characters: updated.characters.map(c => c.substring(0, 100)),
+    locations: updated.locations.map(l => l.substring(0, 100)),
+    unresolvedThreads: updated.unresolvedThreads.map(t => t.substring(0, 200)),
     lastEvents: updated.lastEvents.substring(0, 500),
-    topicSummaries: updated.topicSummaries.map((s: string) => s.substring(0, 200)),
+    topicSummaries: updated.topicSummaries.map(s => s.substring(0, 200)),
+    mainCharacters: updated.mainCharacters.map(c => ({
+      ...c,
+      name: c.name.substring(0, 50),
+      role: c.role.substring(0, 50),
+      traits: c.traits.map(t => t.substring(0, 30)),
+      arc: c.arc.map(a => a.substring(0, 100)),
+    })),
+    supportingCharacters: updated.supportingCharacters.map(s => s.substring(0, 50)),
+    detailedLocations: updated.detailedLocations.map(l => ({
+      name: l.name.substring(0, 50),
+      description: l.description.substring(0, 200),
+    })),
+    worldRules: updated.worldRules.map(r => r.substring(0, 100)),
+    overarchingGoal: updated.overarchingGoal.substring(0, 200),
+    currentArc: updated.currentArc.substring(0, 200),
+    emotionalTone: updated.emotionalTone.substring(0, 50),
+    keyConceptsIntroduced: updated.keyConceptsIntroduced.map(k => k.substring(0, 100)),
+    conceptsToReinforce: updated.conceptsToReinforce.map(k => k.substring(0, 100)),
+    recentEvents: updated.recentEvents.map(e => e.substring(0, 500)),
   };
 }
 
 // ============================================================================
-// 9. TOPIC EXPANSION (heavy) – with fallback
+// 10. TWO-STAGE TOPIC EXPANSION (token-efficient)
 // ============================================================================
+async function generateBlockPlan(
+  userId: string,
+  topic: any,
+  context: any
+): Promise<Array<{ type: string; estimatedTokens: number }>> {
+  return await callWithFallback(async (provider, model) => {
+    const { object, usage } = await withTimeout(
+      generateObject({
+        model: provider === 'groq' ? groq(model) : google(model),
+        providerOptions: provider === 'groq' ? {
+          groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
+        } : undefined,
+        system: 'Plan content blocks for a topic. Return JSON array.',
+        prompt: `Topic: ${topic.topicTitle}. Difficulty: ${context.difficultyLevel}. Plan 5-7 blocks mixing: story, fact, quiz, definition, image, code, summary. Return: [{type, estimatedTokens}]`,
+        schema: z.array(z.object({
+          type: z.enum(['story', 'fact', 'quiz', 'definition', 'image', 'code', 'summary']),
+          estimatedTokens: z.number().min(100).max(2000),
+        })).min(4).max(7),
+        temperature: 0.2,
+      }),
+      25000
+    );
+    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
+    return object;
+  }, 'light', userId);
+}
+
+async function generateIndividualBlock(
+  userId: string,
+  blockType: string,
+  topic: any,
+  context: any,
+  storyCtx: StoryContext
+): Promise<any> {
+  const taskType = blockType === 'story' ? 'heavy' : 'light';
+
+  const prompts: Record<string, { system: string; prompt: string }> = {
+    story: {
+      system: `Write engaging educational story. Tone: ${context.randomTone}. Universe: ${context.randomTrope}.`,
+      prompt: `Topic: ${topic.topicTitle}. Weave in: hobbies[${context.safeHobbies}], interests[${context.safeInterests}]. Story context: chars[${storyCtx.mainCharacters.map(c => c.name).join(',')}], events[${storyCtx.recentEvents.join(';')}]. Write 3-4 paragraphs teaching ${topic.pedagogicalGoal}. Return JSON: {type:"story", content:string, title?:string}`,
+    },
+    fact: {
+      system: 'Explain a key concept clearly with examples.',
+      prompt: `Explain: ${topic.pedagogicalGoal}. Level: ${context.difficultyLevel}. Include 1-2 real-world examples. Return JSON: {type:"fact", content:string, title?:string}`,
+    },
+    quiz: {
+      system: 'Create a fair quiz question with clear correct answer.',
+      prompt: `Quiz on: ${topic.pedagogicalGoal}. Difficulty: ${context.difficultyLevel}. Return JSON with quizData: {type:"quiz", quizData:{type, options, correctAnswer, explanation, points}}`,
+    },
+    definition: {
+      system: 'Define a term concisely with example.',
+      prompt: `Define key term from: ${topic.pedagogicalGoal}. Include brief example. Return JSON: {type:"definition", definitionData:{term, definition, example?}}`,
+    },
+    image: {
+      system: 'Create detailed image prompt for educational concept.',
+      prompt: `Visualize: ${topic.pedagogicalGoal}. Style: educational illustration, no text. Return JSON: {type:"image", imagePrompt:string}`,
+    },
+    code: {
+      system: 'Provide working code example with explanation.',
+      prompt: `Code example for: ${topic.pedagogicalGoal}. Language: Python. Include comments. Return JSON: {type:"code", codeData:{language, code, output?}}`,
+    },
+    summary: {
+      system: 'Summarize key takeaways concisely.',
+      prompt: `Summarize: ${topic.pedagogicalGoal}. 3-5 bullet points. Return JSON: {type:"summary", content:string}`,
+    },
+  };
+
+  const config = prompts[blockType] || prompts.fact;
+
+  return await callWithFallback(async (provider, model) => {
+    const { object, usage } = await withTimeout(
+      generateObject({
+        model: provider === 'groq' ? groq(model) : google(model),
+        providerOptions: provider === 'groq' ? {
+          groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
+        } : undefined,
+        system: config.system,
+        prompt: config.prompt,
+        schema: ContentBlockSchema,
+        temperature: blockType === 'story' ? 0.7 : 0.3,
+      }),
+      blockType === 'story' ? 45000 : 30000
+    );
+    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
+    return object;
+  }, taskType, userId);
+}
+
 async function expandTopic(
   topic: any,
   context: {
@@ -631,91 +848,36 @@ async function expandTopic(
     safeHobbies: string;
     safeInterests: string;
     storyContext: StoryContext;
+    previousChapterSummary?: string;
+    nextChapterTeaser?: string;
   },
   userId: string
 ): Promise<any[]> {
-  const storySummary = `
-Story so far:
-- Characters: ${context.storyContext.characters.join(', ') || 'none yet'}
-- Locations: ${context.storyContext.locations.join(', ') || 'none yet'}
-- Unresolved threads: ${context.storyContext.unresolvedThreads.join(', ') || 'none'}
-- Last events: ${context.storyContext.lastEvents || 'story begins'}
-- Previous topics: ${context.storyContext.topicSummaries.join('; ') || 'none'}
-`;
+  const blockPlan = await generateBlockPlan(userId, topic, context);
 
-  const systemPrompt = `You are drafting Topic ${topic.topicNumber} of ${context.totalTopics} for Chapter ${context.chapterNumber}/${context.totalChapters}.
-                 
-📖 TOPIC: ${topic.topicTitle}
-📊 DIFFICULTY: ${context.difficultyLevel}
-🎭 UNIVERSE: ${context.randomTrope}
-🎨 TONE: ${context.randomTone}
-🌀 TWIST: ${context.randomTwist}
-${context.referenceContext}
-
-${storySummary}
-
-🎯 PEDAGOGICAL GOAL: ${topic.pedagogicalGoal}
-📝 NARRATIVE BEAT: ${topic.narrativeBeat}
-
-⚡ STRICT CONTENT REQUIREMENTS:
-1. ${context.focusModeDirectives}
-2. Generate 6-10 content blocks mixing different types:
-   - 2-3 STORY blocks (4-5 paragraphs each, highly engaging)
-   - 2-3 FACT blocks (key concepts with examples)
-   - 2 QUIZ blocks of varying types: single MCQ, multiple MCQ, true/false, or short answer
-   - 1-2 DEFINITION blocks (key terms)
-   - 1-2 IMAGE blocks (visual concepts with detailed prompts)
-   - 1 CODE block if applicable (with working examples)
-   - 1 SUMMARY block (key takeaways)
-3. Weave student's hobbies (${context.safeHobbies}) and interests (${context.safeInterests}) into stories and examples.
-4. For ${context.difficultyLevel} level: ${
-    context.difficultyLevel === 'beginner' 
-      ? 'Use simple analogies, step-by-step explanations, and relatable examples.' 
-      : context.difficultyLevel === 'intermediate' 
-      ? 'Include practical applications, case studies, and real-world examples.' 
-      : 'Include advanced theories, research papers, edge cases, and cutting-edge developments.'
+  const blocks: any[] = [];
+  for (const plan of blockPlan) {
+    try {
+      const block = await generateIndividualBlock(
+        userId,
+        plan.type,
+        topic,
+        context,
+        context.storyContext
+      );
+      if (block) blocks.push({ id: crypto.randomUUID(), ...block });
+    } catch (error) {
+      console.warn(`[Orchestrator] Block ${plan.type} failed, skipping.`, error);
+    }
+    // Increased delay to avoid hitting request-per-minute limits
+    await new Promise(resolve => setTimeout(resolve, 1500 + Math.random() * 500));
   }
-5. DO NOT repeat content from previous topics or chapters.
-6. Each story block MUST be 4-5 paragraphs minimum.
-7. For quizzes:
-   - Single MCQ: provide 4 options and one correct answer.
-   - Multiple MCQ: provide 4-5 options and 2-3 correct answers.
-   - True/False: provide options ["True","False"] and correctAnswer as "True" or "False".
-   - Short answer: provide correctAnswer and optional keywords.
-8. Image prompts must be highly descriptive for AI image generation.`;
 
-  const prompt = `Write deep, detailed content blocks for Topic ${topic.topicNumber}: "${topic.topicTitle}" of "${context.chapterTitle}".
-
-This is Chapter ${context.chapterNumber} of ${context.totalChapters}. Build upon previous knowledge and the ongoing story.
-
-Return ONLY valid JSON with a "blocks" array containing 6-10 content blocks.`;
-
-  const result = await callWithFallback(async (provider, model) => {
-    const { object, usage } = await withTimeout(
-      generateObject({
-        model: provider === 'groq' ? groq(model) : google(model),
-        providerOptions: provider === 'groq' ? {
-          groq: {
-            structuredOutputs: false,
-            response_format: { type: 'json_object' },
-          },
-        } : undefined,
-        system: systemPrompt,
-        prompt,
-        schema: TopicExpansionSchema,
-        temperature: 0.75,
-      }),
-      60000
-    );
-    if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
-    return object;
-  }, 'heavy'); // heavy task
-
-  return result.blocks;
+  return blocks;
 }
 
 // ============================================================================
-// 10. THE MASTER TUTOR ENGINE (unchanged, but uses updated helpers)
+// 11. THE MASTER TUTOR ENGINE – with rate‑limit resilience and progress caching
 // ============================================================================
 export async function generateChapterContent(params: GenerateChapterParams) {
   const startTime = Date.now();
@@ -756,17 +918,17 @@ export async function generateChapterContent(params: GenerateChapterParams) {
     focusModeDirectives = `FOCUS MODE: EXTREME. Maximum academic rigor. INCLUDE the deep history of the concept, advanced edge-cases, and research paper references. This is ${difficultyLevel} level - push the boundaries.`;
   }
 
-  const safeHobbies = profile.hobbies?.length 
-    ? profile.hobbies.join(', ').substring(0, 200) 
+  const safeHobbies = profile.hobbies?.length
+    ? profile.hobbies.join(', ').substring(0, 200)
     : 'technology and adventure';
-  const safeInterests = profile.interests?.length 
-    ? profile.interests.join(', ').substring(0, 200) 
+  const safeInterests = profile.interests?.length
+    ? profile.interests.join(', ').substring(0, 200)
     : 'general knowledge';
-  
+
   const tropeIndex = chapterNumber % NARRATIVE_TROPES.length;
   const twistIndex = (chapterNumber + 3) % PLOT_TWISTS.length;
   const toneIndex = (chapterNumber + 1) % STORY_TONES.length;
-  
+
   const randomTrope = NARRATIVE_TROPES[tropeIndex];
   const randomTwist = PLOT_TWISTS[twistIndex];
   const randomTone = STORY_TONES[toneIndex];
@@ -804,10 +966,7 @@ export async function generateChapterContent(params: GenerateChapterParams) {
         generateObject({
           model: provider === 'groq' ? groq(model) : google(model),
           providerOptions: provider === 'groq' ? {
-            groq: {
-              structuredOutputs: false,
-              response_format: { type: 'json_object' },
-            },
+            groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
           } : undefined,
           system: `You are the EduBridge Master Architect. Your ONLY task is to create a high-level blueprint for Chapter ${chapterNumber} of ${totalChapters}. Do NOT generate any actual lesson content. Only output the blueprint structure.
 
@@ -839,7 +998,7 @@ Return ONLY valid JSON.`,
       );
       if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
       return object;
-    }, 'light'); // blueprint is a lighter task
+    }, 'light', userId);
 
     if (!blueprint.topics || blueprint.topics.length === 0) {
       throw new Error('Blueprint generation returned zero topics');
@@ -847,25 +1006,22 @@ Return ONLY valid JSON.`,
 
     chapterCache.set(cacheKey, {
       blueprint,
-      context: cached?.context,
+      context: cached?.context || DEFAULT_STORY_CONTEXT,
+      lastCompletedTopicIndex: -1, // none completed yet
       expiresAt: now + CACHE_TTL,
     });
   }
 
-  // PHASE 2: TOPIC EXPANSION with narrative context
-  let storyContext: StoryContext = cached?.context || {
-    characters: [],
-    locations: [],
-    unresolvedThreads: [],
-    lastEvents: '',
-    topicSummaries: [],
-  };
+  // PHASE 2: TOPIC EXPANSION with narrative context – resume from last completed topic
+  let storyContext: StoryContext = cached?.context || DEFAULT_STORY_CONTEXT;
+  const startIndex = (cached?.lastCompletedTopicIndex ?? -1) + 1; // next topic to process
 
-  console.log(`[Orchestrator] Phase 2: Expanding ${blueprint.topics.length} topics for "${chapterTitle}" sequentially...`);
+  console.log(`[Orchestrator] Phase 2: Expanding ${blueprint.topics.length} topics for "${chapterTitle}" sequentially (resuming from topic ${startIndex})...`);
   let allBlocks: any[] = [];
-  let successfulTopics = 0;
+  let successfulTopics = startIndex; // already have startIndex topics completed from previous runs
 
-  for (const topic of blueprint.topics) {
+  for (let i = startIndex; i < blueprint.topics.length; i++) {
+    const topic = blueprint.topics[i];
     try {
       const blocks = await expandTopic(topic, {
         chapterNumber,
@@ -881,24 +1037,41 @@ Return ONLY valid JSON.`,
         safeHobbies,
         safeInterests,
         storyContext,
+        previousChapterSummary: previousChapterTitle,
+        nextChapterTeaser: nextChapterTitle,
       }, userId);
 
       allBlocks.push(...blocks);
-      successfulTopics++;
+      successfulTopics = i; // after success, this topic is done
 
       storyContext = await updateStoryContext(userId, storyContext, blocks, topic.topicTitle);
-      
+
+      // Update cache with progress
       chapterCache.set(cacheKey, {
         blueprint,
         context: storyContext,
+        lastCompletedTopicIndex: i,
         expiresAt: now + CACHE_TTL,
       });
     } catch (error) {
+      if (error instanceof RateLimitError) {
+        // Save progress and rethrow – Inngest will retry after the required delay
+        console.warn(`[Orchestrator] Rate limit hit at topic ${i}. Saving progress and throwing.`);
+        chapterCache.set(cacheKey, {
+          blueprint,
+          context: storyContext,
+          lastCompletedTopicIndex: i - 1, // last completed is previous topic
+          expiresAt: now + CACHE_TTL,
+        });
+        throw error; // Inngest will see this and retry according to its policy
+      }
       console.error(`[Orchestrator] ⚠️ Topic ${topic.topicNumber} of "${chapterTitle}" failed after retries:`, error);
+      // Continue to next topic even if one fails
     }
   }
 
-  if (successfulTopics < Math.ceil(blueprint.topics.length / 2)) {
+  // If we finished the loop but got less than half topics successful, it's a fatal error (shouldn't happen with rate‑limit handling)
+  if (successfulTopics < Math.ceil(blueprint.topics.length / 2) - 1) { // -1 because successfulTopics is index
     throw new Error(`CRITICAL: Majority of topics failed for "${chapterTitle}". Aborting chapter generation.`);
   }
 
@@ -937,8 +1110,11 @@ Return ONLY valid JSON.`,
 
   const generationDuration = Date.now() - startTime;
   console.log(`[Orchestrator] ✅ Success! Generated ${finalBlocks.length} blocks for Chapter ${chapterNumber}: "${chapterTitle}" (took ${generationDuration}ms)`);
-  
-  return { 
+
+  // Clear the cache entry upon successful completion (optional, but keeps cache clean)
+  chapterCache.delete(cacheKey);
+
+  return {
     blocks: finalBlocks,
     totalTopics: blueprint.topics.length,
     totalEstimatedMinutes: blueprint.totalEstimatedMinutes,
@@ -946,7 +1122,7 @@ Return ONLY valid JSON.`,
 }
 
 // ============================================================================
-// 11. EVALUATION ENGINE – with fallback
+// 12. EVALUATION ENGINE – with fallback (unchanged)
 // ============================================================================
 export async function evaluateAnswer(
   userId: string,
@@ -959,10 +1135,7 @@ export async function evaluateAnswer(
       generateObject({
         model: provider === 'groq' ? groq(model) : google(model),
         providerOptions: provider === 'groq' ? {
-          groq: {
-            structuredOutputs: false,
-            response_format: { type: 'json_object' },
-          },
+          groq: { structuredOutputs: false, response_format: { type: 'json_object' } },
         } : undefined,
         system: `You are an expert grader. Provide a score (0-100), a boolean isCorrect, and detailed feedback. Return JSON.`,
         prompt: `Evaluate this student answer.
@@ -982,5 +1155,5 @@ export async function evaluateAnswer(
     );
     if (usage?.totalTokens) await recordTokenUsage(userId, usage.totalTokens);
     return object;
-  }, 'light');
+  }, 'light', userId);
 }

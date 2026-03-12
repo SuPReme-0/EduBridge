@@ -1,7 +1,12 @@
+// inngest/functions.ts – Complete updated version for the new orchestrator
 import { inngest } from './client';
 import { prisma } from '@/lib/db/client';
-import { generateChapterContent, type UserProfile } from '@/lib/ai/orchestrator';
-import { canSpendTokens, recordTokenUsage, getRemainingTokens, TOKEN_BUDGET } from '@/lib/rate-limit';
+import {
+  generateChapterContent,
+  type UserProfile,
+  RateLimitError,          // ✅ now exported from orchestrator
+} from '@/lib/ai/orchestrator';
+import { canSpendTokens, TOKEN_BUDGET } from '@/lib/rate-limit';
 
 // Configuration
 const DAILY_BATCH_SIZE = 5;               // chapters per user per day
@@ -63,7 +68,7 @@ export const generateCurriculumJob = inngest.createFunction(
     // Split into daily batches
     for (let i = 0; i < totalChapters; i += DAILY_BATCH_SIZE) {
       const batch = allChapters.slice(i, i + DAILY_BATCH_SIZE);
-      
+
       // Dispatch this batch
       await step.sendEvent(`batch-${Math.floor(i / DAILY_BATCH_SIZE) + 1}`, {
         name: 'chapter.batch',
@@ -174,7 +179,7 @@ export const generateChapterBatchJob = inngest.createFunction(
 );
 
 // ============================================================================
-// JOB 3: CHAPTER GENERATOR (actual content generation with token recording)
+// JOB 3: CHAPTER GENERATOR (actual content generation with rate‑limit handling)
 // ============================================================================
 export const generateChapterJob = inngest.createFunction(
   {
@@ -185,11 +190,11 @@ export const generateChapterJob = inngest.createFunction(
   },
   { event: 'chapter.generate' },
   async ({ event, step }) => {
-    const { 
-      chapterId, 
-      userId, 
-      referenceBooks, 
-      subjectName, 
+    const {
+      chapterId,
+      userId,
+      referenceBooks,
+      subjectName,
       chapterTitle,
       curriculumId,
       totalChapters,
@@ -207,8 +212,9 @@ export const generateChapterJob = inngest.createFunction(
       profile: UserProfile;
     };
 
-    // Optional: double‑check token availability (in case many users arrived simultaneously)
-    const enough = await canSpendTokens(userId, 5000); // rough estimate
+    // Pre‑check token availability (rough estimate)
+    const estimatedTokens = 5000; // adjust based on two‑stage expansion
+    const enough = await canSpendTokens(userId, estimatedTokens);
     if (!enough) {
       // Still not enough? reschedule for tomorrow.
       await step.sleep('token-exhausted', '24h');
@@ -259,10 +265,11 @@ export const generateChapterJob = inngest.createFunction(
     });
 
     // Generate content
-    const aiResponse = await step.run('run-orchestrator', async () => {
-      await prisma.chapter.update({ where: { id: chapterId }, data: { generationProgress: 50 } });
+    let aiResponse;
+    try {
+      aiResponse = await step.run('run-orchestrator', async () => {
+        await prisma.chapter.update({ where: { id: chapterId }, data: { generationProgress: 50 } });
 
-      try {
         const result = await generateChapterContent({
           userId,
           chapterTitle,
@@ -277,16 +284,36 @@ export const generateChapterJob = inngest.createFunction(
 
         await prisma.chapter.update({ where: { id: chapterId }, data: { generationProgress: 90 } });
         return result;
-      } catch (error: any) {
-        await prisma.chapter.update({
-          where: { id: chapterId },
-          data: { generationProgress: 100, status: 'FAILED', errorMessage: error.message },
-        });
-        throw error;
-      }
-    });
+      });
+    } catch (error: any) {
+      // Handle rate‑limit errors specially
+      if (error instanceof RateLimitError) {
+        // Log the rate limit
+        console.log(`[Inngest] Rate limit hit for chapter ${chapterId}, retry after ${error.retryAfter}s`);
 
-    // Save content and record token usage
+        // ❌ Do not change status to 'RATE_LIMITED' unless your Prisma enum includes it.
+        // The chapter remains in 'GENERATING' state, and the orchestrator's cache preserves progress.
+
+        // Wait exactly the required time and then reschedule the same event
+        await step.sleep('rate-limit-wait', `${error.retryAfter}s`);
+        await step.sendEvent(`retry-${chapterId}`, {
+          name: 'chapter.generate',
+          data: event.data,
+        });
+
+        // Return early – this run is considered successful (the real work is deferred)
+        return { success: false, rescheduled: true, reason: 'rate_limit' };
+      }
+
+      // For other errors, mark as FAILED and rethrow
+      await prisma.chapter.update({
+        where: { id: chapterId },
+        data: { generationProgress: 100, status: 'FAILED', errorMessage: error.message },
+      });
+      throw error;
+    }
+
+    // Save content (token recording is already done inside the orchestrator)
     await step.run('save-mixed-content', async () => {
       const totalMinutes = aiResponse.blocks.reduce((acc: number, block: any) => acc + (block.estimatedReadTime || 5), 0);
 
@@ -300,11 +327,6 @@ export const generateChapterJob = inngest.createFunction(
           completedAt: new Date(),
         },
       });
-
-      // Record token usage (we need to capture actual usage from the API response – you may need to modify generateChapterContent to return usage)
-      // For now, record an estimate (you can enhance later)
-      const estimatedTokens = 5000; // replace with actual usage if available
-      await recordTokenUsage(userId, estimatedTokens);
 
       // Check if curriculum is fully complete
       const allChapters = await prisma.chapter.findMany({
@@ -332,7 +354,7 @@ export const generateChapterJob = inngest.createFunction(
 );
 
 // ============================================================================
-// JOB 4: ERROR RECOVERY (same as before, but with token check)
+// JOB 4: ERROR RECOVERY – now only retries FAILED chapters (rate‑limited ones are handled separately)
 // ============================================================================
 export const retryFailedChaptersJob = inngest.createFunction(
   {
@@ -345,7 +367,10 @@ export const retryFailedChaptersJob = inngest.createFunction(
   async ({ step }) => {
     const failedChapters = await step.run('find-failed-chapters', async () => {
       return await prisma.chapter.findMany({
-        where: { status: 'FAILED', updatedAt: { lt: new Date(Date.now() - 6 * 60 * 60 * 1000) } },
+        where: {
+          status: 'FAILED',
+          updatedAt: { lt: new Date(Date.now() - 6 * 60 * 60 * 1000) },
+        },
         include: {
           subject: {
             include: {
