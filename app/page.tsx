@@ -244,12 +244,12 @@ const CreatorSection = ({ theme }: { theme: any }) => (
           Get the native Android app for the best offline experience and push notifications.
         </p>
         <a
-          href="/apk/edubridge-v1.1.0.apk"
+          href="/apk/edubridge-v1.1.1.apk"
           download
           className={`inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all`}
         >
           <Download className="w-5 h-5" />
-          Download APK (v1.1.0)
+          Download APK (v1.1.1)
           <ExternalLink className="w-4 h-4" />
         </a>
         <p className={`text-xs ${theme.muted} mt-4`}>
@@ -990,7 +990,7 @@ function HomePage() {
                   </Link>
                   {isWeb && (
                     <a
-                      href="/apk/edubridge-v1.1.0.apk"
+                      href="/apk/edubridge-v1.1.1.apk"
                       download
                       className={`w-full sm:w-auto h-16 px-10 text-lg rounded-2xl border-2 ${t.border} ${t.card} ${t.text} hover:${t.accentLight} font-bold shadow-sm transition-all flex items-center justify-center gap-2`}
                     >

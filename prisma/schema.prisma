@@ -1,5 +1,5 @@
 // prisma/schema.prisma
-// FrazEdu - Production LMS Database Schema (FINAL)
+// EduBridge - Production LMS Database Schema (FINAL)
 // Database: PostgreSQL (Supabase)
 
 generator client {

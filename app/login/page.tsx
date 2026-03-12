@@ -7,6 +7,7 @@ import { supabase } from '@/lib/supabase/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { motion, AnimatePresence } from 'motion/react';
+import { Browser } from '@capacitor/browser';
 import {
   Library, Mail, Lock, Loader2,
   ShieldAlert, User, GraduationCap, Sparkles, CheckCircle2,
@@ -295,23 +296,38 @@ function AuthContent() {
     }
   };
 
-  // Handle Google OAuth
-  const handleGoogleAuth = async () => {
-    setGoogleLoading(true);
-    setError('');
-    try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: `${window.location.origin}/api/auth/callback`,
-        },
-      });
-      if (error) throw error;
-    } catch (err: any) {
-      setError(err.message || 'Failed to connect with Google.');
-      setGoogleLoading(false);
+// Helper to detect native app (no import needed)
+const isNative = () => {
+  if (typeof window === 'undefined') return false;
+  return (window as any).Capacitor?.isNativePlatform?.() || false;
+};
+
+const handleGoogleAuth = async () => {
+  try {
+    const { data, error } = await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: isNative()
+          ? 'com.priyanshu.edubridge://auth' // 👈 replace with your actual custom scheme
+          : window.location.origin + '/auth/callback',
+        skipBrowserRedirect: isNative(), // prevents automatic window.open
+      },
+    });
+
+    if (error) throw error;
+
+    if (isNative() && data.url) {
+      // Open the OAuth URL in an in‑app browser tab
+      await Browser.open({ url: data.url });
+      // The redirect will be handled by the app's URL listener (Step 3)
+    } else {
+      // In web, fallback to normal redirect
+      window.location.href = data.url;
     }
-  };
+  } catch (err) {
+    console.error('Google sign-in error:', err);
+  }
+};
 
   const t = activeTheme;
 
