@@ -281,17 +281,20 @@ function HomePage() {
   const { scrollY } = useScroll();
 
   // 2. Header glassmorphism: Keep this short so the navigation 
-  // background becomes solid quickly as content slides under it.
+  // background becomes solid quickly as content slides under it.// 1. Header glassmorphism (unchanged)
   const headerOpacity = useTransform(scrollY, [0, 50], [0, 1]);
   
-  // 3. Hero Parallax: Glides down a full 200px over 400px of scrolling.
-  // This keeps the text moving in sync with your thumb/mouse wheel.
-  const heroY = useTransform(scrollY, [0, 400], [0, 200]);
+  // 2. Hero Parallax: Stretched to 800px.
+  // It now glides down 200px slowly over 800px of scrolling, 
+  // keeping it in the physical viewport much longer on mobile.
+  const heroY = useTransform(scrollY, [0, 800], [0, 200]);
   
-  // 4. Extended Cinematic Fade: Fades over 800 pixels.
-  // - On a phone: This is about 1 to 1.5 full screen swipes.
-  // - On desktop: This is about 4 to 5 mouse wheel ticks.
-  const heroOpacity = useTransform(scrollY, [0, 400], [1, 0]);
+  // 3. The "Ghost Fade" Fix:
+  // We stretch the fade range to 800px.
+  // Instead of fading to 0, it fades to 0.1 (10% opacity). 
+  // This ensures that when you scroll back up, you immediately see the faintly faded 
+  // text waiting for you, rather than staring at a blank space.
+  const heroOpacity = useTransform(scrollY, [0, 800], [1, 0.1]);
 
   // ============================================================================
   // CLIENT-SIDE CHECK & AUTH (Fresh load always)
