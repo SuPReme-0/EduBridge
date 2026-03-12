@@ -60,8 +60,8 @@ export async function DELETE(req: Request) {
         await tx.curriculum.delete({ where: { id: curr.id } });
       }
       
-      // 3. Delete profile
-      await tx.profile.delete({ where: { userId: user.id } });
+      // 3. Delete profile – use deleteMany to avoid error if profile doesn't exist
+      await tx.profile.deleteMany({ where: { userId: user.id } });
       
       // 4. Delete audit logs
       await tx.auditLog.deleteMany({ where: { userId: user.id } });
@@ -74,18 +74,11 @@ export async function DELETE(req: Request) {
       throw new Error(`Auth deletion failed: ${authDeleteError.message}`);
     }
 
+    // 6. Sign out the user to clear the session cookie
+    await supabase.auth.signOut();
+
     const duration = Date.now() - startTime;
     console.log(`[Delete Account] Success in ${duration}ms | User: ${user.id} | Request: ${requestId}`);
-
-    // Log the deletion
-    await prisma.auditLog.create({
-      data: {
-        userId: user.id,
-        action: 'ACCOUNT_DELETED',
-        resourceType: 'User',
-        resourceId: user.id,
-      },
-    });
 
     return NextResponse.json({
       success: true,
