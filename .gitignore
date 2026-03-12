@@ -53,3 +53,21 @@ __pycache__/
 venv/
 env/
 .pytest_cache/
+
+# Capacitor / Android
+/android/.gradle/
+/android/local.properties
+/android/app/build/
+/android/captures/
+/android/.idea/
+/android/*.iml
+/android/**.lock
+/android/**.log
+/android/**.hprof
+/android/keystore.jks
+/android/keystore.properties
+/android/gradle/
+/android/gradlew
+/android/gradlew.bat
+/android/gradle-wrapper.jar
+/android/gradle-wrapper.properties

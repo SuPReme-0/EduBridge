@@ -317,6 +317,7 @@ function OnboardingContent() {
   const [analyzingSyllabus, setAnalyzingSyllabus] = useState(false);
   const [error, setError] = useState('');
   const [fullName, setFullName] = useState('');
+  const [hasExistingAge, setHasExistingAge] = useState(false);
 
   const [activeTheme, setActiveTheme] = useState<ThemeConfig>(() => {
     if (typeof window !== 'undefined') {
@@ -973,10 +974,20 @@ const levelDisplay = useMemo(() => {
                       <div className="space-y-2">
                         <Label className={`text-xs uppercase tracking-wider font-bold ${t.muted} flex items-center gap-2`}>
                           Age {age && <span className="text-xs font-normal">(already set)</span>}
-                        </Label>
-                        <Input type="number" placeholder="16" value={age} onChange={(e) => setAge(e.target.value)}
-                          disabled={!!age} className={`h-12 ${t.inputBg} ${t.inputBorder} ${t.text} focus:border-indigo-500 rounded-xl ${age ? 'opacity-75 cursor-not-allowed' : ''}`} />
-                        {age && <p className={`text-xs ${t.muted} mt-1`}>Age already provided – contact support to change.</p>}
+                        </Label><Input
+  type="text"
+  inputMode="numeric"
+  pattern="[0-9]*"
+  placeholder="16"
+  value={age}
+  onChange={(e) => {
+    // Only allow digits
+    const val = e.target.value.replace(/[^0-9]/g, '');
+    setAge(val);
+  }}
+  disabled={hasExistingAge}
+  className={`h-12 ${t.inputBg} ${t.inputBorder} ${t.text} focus:border-indigo-500 rounded-xl ${hasExistingAge ? 'opacity-75 cursor-not-allowed' : ''}`}
+/>{age && <p className={`text-xs ${t.muted} mt-1`}>Age already provided – contact support to change.</p>}
                       </div>
                       <div className="space-y-2">
                         <Label className={`text-xs uppercase tracking-wider font-bold ${t.muted} flex items-center gap-2`}>

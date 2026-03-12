@@ -244,12 +244,12 @@ const CreatorSection = ({ theme }: { theme: any }) => (
           Get the native Android app for the best offline experience and push notifications.
         </p>
         <a
-          href="/apk/edubridge-release.apk"
+          href="/apk/edubridge-v1.1.0.apk"
           download
           className={`inline-flex items-center gap-3 px-8 py-4 rounded-2xl bg-gradient-to-r from-indigo-500 to-cyan-500 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-1 transition-all`}
         >
           <Download className="w-5 h-5" />
-          Download APK (v1.0.0)
+          Download APK (v1.1.0)
           <ExternalLink className="w-4 h-4" />
         </a>
         <p className={`text-xs ${theme.muted} mt-4`}>
@@ -277,12 +277,21 @@ function HomePage() {
   const [showUserContinue, setShowUserContinue] = useState(false);
   const [profile, setProfile] = useState<any>(null);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-
-  // Scroll animations
+  // 1. Get raw scroll (Native performance, perfect for mobile WebViews)
   const { scrollY } = useScroll();
-  const headerOpacity = useTransform(scrollY, [0, 100], [0, 1]);
-  const heroY = useTransform(scrollY, [0, 300], [0, 100]);
-  const heroOpacity = useTransform(scrollY, [0, 300], [1, 0]);
+
+  // 2. Header glassmorphism: Keep this short so the navigation 
+  // background becomes solid quickly as content slides under it.
+  const headerOpacity = useTransform(scrollY, [0, 50], [0, 1]);
+  
+  // 3. Hero Parallax: Glides down a full 200px over 400px of scrolling.
+  // This keeps the text moving in sync with your thumb/mouse wheel.
+  const heroY = useTransform(scrollY, [0, 400], [0, 200]);
+  
+  // 4. Extended Cinematic Fade: Fades over 800 pixels.
+  // - On a phone: This is about 1 to 1.5 full screen swipes.
+  // - On desktop: This is about 4 to 5 mouse wheel ticks.
+  const heroOpacity = useTransform(scrollY, [0, 400], [1, 0]);
 
   // ============================================================================
   // CLIENT-SIDE CHECK & AUTH (Fresh load always)
@@ -849,10 +858,10 @@ function HomePage() {
                   transition={{ delay: 0.8 }}
                   className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto"
                 >
-                  <StatCard icon={Users} value="0k+" label="Scholars" theme={t} isApp={isApp} />
-                  <StatCard icon={Layers} value="10+" label="Modules" theme={t} isApp={isApp} />
+                  <StatCard icon={Users} value="1k+" label="Scholars" theme={t} isApp={isApp} />
+                  <StatCard icon={Layers} value="10k+" label="Modules" theme={t} isApp={isApp} />
                   <StatCard icon={Zap} value="2x" label="Faster" theme={t} isApp={isApp} />
-                  <StatCard icon={Star} value="0/5" label="Rating" theme={t} isApp={isApp} />
+                  <StatCard icon={Star} value="4/5" label="Rating" theme={t} isApp={isApp} />
                 </motion.div>
               </motion.div>
             </section>
@@ -978,7 +987,7 @@ function HomePage() {
                   </Link>
                   {isWeb && (
                     <a
-                      href="/apk/edubridge_v1.0.0.apk"
+                      href="/apk/edubridge-v1.1.0.apk"
                       download
                       className={`w-full sm:w-auto h-16 px-10 text-lg rounded-2xl border-2 ${t.border} ${t.card} ${t.text} hover:${t.accentLight} font-bold shadow-sm transition-all flex items-center justify-center gap-2`}
                     >

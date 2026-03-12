@@ -457,7 +457,7 @@ function DashboardContent() {
       <AnimatedGreeting name={displayName} theme={theme} lastActive={profile.lastActiveAt} />
 
       {/* Quick Stats Row */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <motion.div whileHover={{ y: -5 }} transition={{ type: "spring", stiffness: 300 }}>
           <Card className={`rounded-2xl ${theme.card} border ${theme.border} shadow-lg p-6 backdrop-blur-xl`}>
             <div className="flex items-center justify-between mb-4">

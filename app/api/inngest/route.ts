@@ -1,12 +1,18 @@
 import { serve } from "inngest/next";
 import { inngest } from "@/inngest/client";
-import { generateCurriculumJob, generateChapterJob } from "@/inngest/functions";
+import {
+  generateCurriculumJob,
+  generateChapterBatchJob,   // 👈 this one was missing
+  generateChapterJob,
+  retryFailedChaptersJob,    // 👈 also good to include
+} from "@/inngest/functions"; // adjust the import path if needed
 
-// Inngest automatically binds itself to these HTTP methods
 export const { GET, POST, PUT } = serve({
   client: inngest,
   functions: [
-    generateCurriculumJob, 
-    generateChapterJob
+    generateCurriculumJob,
+    generateChapterBatchJob,
+    generateChapterJob,
+    retryFailedChaptersJob,
   ],
 });

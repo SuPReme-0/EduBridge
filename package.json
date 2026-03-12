@@ -36,6 +36,7 @@
     "@supabase/supabase-js": "^2.98.0",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.36.3",
+    "@vercel/analytics": "^2.0.0",
     "ai": "^6.0.116",
     "bcryptjs": "^2.4.3",
     "canvas-confetti": "^1.9.4",
@@ -63,6 +64,7 @@
     "rehype-raw": "^7.0.0",
     "remark-gfm": "^4.0.1",
     "sharp": "^0.33.0",
+    "swr": "^2.4.1",
     "tailwind-merge": "^3.5.0",
     "tailwindcss-animate": "^1.0.7",
     "tesseract.js": "^5.0.0",
@@ -71,6 +73,7 @@
     "zustand": "^5.0.11"
   },
   "devDependencies": {
+    "@capacitor/assets": "^3.0.5",
     "@eslint/eslintrc": "^3.0.0",
     "@playwright/test": "^1.45.0",
     "@prisma/config": "^7.4.2",

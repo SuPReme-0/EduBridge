@@ -127,3 +127,26 @@
     background-attachment: fixed;
   }
 }
+
+/* Adjust base font size for mobile */
+@media (max-width: 640px) {
+  html {
+    font-size: 14px; /* slightly smaller base for mobile */
+  }
+  .container {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+}
+
+/* Prevent horizontal overflow */
+body {
+  overflow-x: hidden;
+}
+
+/* Optional: disable animations on mobile for performance */
+@media (prefers-reduced-motion) or (max-width: 640px) {
+  .motion-safe\:animate-pulse {
+    animation: none;
+  }
+}

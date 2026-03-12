@@ -1,0 +1,7 @@
+{
+  "icon": {
+    "source": "./icon.png",
+    "backgroundColor": "#000000",
+    "padding": 4
+  }
+}

@@ -110,6 +110,7 @@ model Profile {
   totalPoints       Int       @default(0)
   testsCompleted    Int       @default(0)
   averageMastery    Int       @default(0)
+  perfectTests      Int       @default(0)
   lastActiveAt      DateTime?
 
   createdAt DateTime @default(now())

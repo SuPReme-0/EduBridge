@@ -167,6 +167,8 @@ export async function POST(req: Request) {
         data: { status: 'COMPLETED' }
       });
     }
+    
+    const isPerfect = percentage === 100;
 
     await prisma.profile.update({
       where: { userId: user.id },
@@ -174,9 +176,12 @@ export async function POST(req: Request) {
         totalStudyMinutes: { increment: Math.ceil((timeSpentSeconds || 0) / 60) },
         totalPoints: { increment: percentage >= 70 ? 100 : 25 },
         testsCompleted: { increment: 1 },
+        perfectTests: { increment: isPerfect ? 1 : 0 }, 
         lastActiveAt: new Date(),
       }
     });
+
+    
 
     const profile = await prisma.profile.findUnique({
       where: { userId: user.id },

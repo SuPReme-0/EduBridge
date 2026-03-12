@@ -249,16 +249,47 @@ function ProfileContent() {
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      const result = reader.result as string;
-      setAvatarUrl(result);
-      triggerAutoSave({ avatarUrl: result });
-    };
-    reader.readAsDataURL(file);
-  };
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  // Optional: show a temporary loading indicator
+  const originalAvatar = avatarUrl;
+  setAvatarUrl(null); // could show a spinner, but you can also keep the old one
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const res = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!res.ok) {
+      const error = await res.json();
+      throw new Error(error.message || 'Upload failed');
+    }
+
+    const data = await res.json();
+    if (data.url) {
+      // Update local state
+      setAvatarUrl(data.url);
+      // Persist to profile via auto‑save
+      await triggerAutoSave({ avatarUrl: data.url });
+      showMessage('success', 'Avatar updated successfully');
+    } else {
+      throw new Error('No URL returned from upload endpoint');
+    }
+  } catch (err: any) {
+    console.error('Avatar upload error:', err);
+    // Revert on error
+    setAvatarUrl(originalAvatar);
+    showMessage('error', err.message || 'Failed to upload avatar');
+  } finally {
+    // Clear the file input so the same file can be selected again if needed
+    e.target.value = '';
+  }
+};
 
   const handleSaveNotifications = async () => {
     try {

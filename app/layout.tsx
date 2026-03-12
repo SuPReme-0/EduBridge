@@ -1,6 +1,7 @@
-import type {Metadata} from 'next';
+import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
-import './globals.css'; // Global styles
+import './globals.css';
+import AuthListener from './AuthListener'; // import the client component
 
 const inter = Inter({
   subsets: ['latin'],
@@ -17,11 +18,13 @@ export const metadata: Metadata = {
   description: 'Futuristic AI-powered learning platform',
 };
 
-export default function RootLayout({children}: {children: React.ReactNode}) {
+export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jetbrainsMono.variable}`}>
       <body suppressHydrationWarning className="font-sans bg-[#050505] text-slate-200 antialiased">
-        {children}
+        <AuthListener>
+          {children}
+        </AuthListener>
       </body>
     </html>
   );
