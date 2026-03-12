@@ -1,4 +1,3 @@
-// middleware.ts
 import { createServerClient, type CookieOptions } from '@supabase/ssr';
 import { NextResponse, type NextRequest } from 'next/server';
 
@@ -51,15 +50,13 @@ export async function middleware(request: NextRequest) {
 
   // 5. SECURITY RULES
   
-  // Rule A: Not logged in? Kick them to the login page.
+  // Rule A: Not logged in? Redirect to the root ("/") instead of login page.
   if ((isProtectedPath || isApiProtected) && !user) {
-    const loginUrl = new URL('/login', request.url);
-    loginUrl.searchParams.set('redirect', request.nextUrl.pathname);
-    return NextResponse.redirect(loginUrl);
+    // Redirect to the root homepage
+    return NextResponse.redirect(new URL('/', request.url));
   }
 
   // Rule B: Already logged in? Keep them away from auth screens ONLY.
-  // ✅ FIXED: Removed the '/' path from this check so they can see the homepage gateway!
   if (user && (request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/signup'))) {
     return NextResponse.redirect(new URL('/dashboard', request.url));
   }
