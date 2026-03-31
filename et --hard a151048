@@ -1,0 +1,22 @@
+[33m6355609[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{0}: reset: moving to 6355609
+[33ma3980aa[m HEAD@{1}: reset: moving to a3980aa
+[33ma151048[m HEAD@{2}: commit: Backend fix
+[33ma3980aa[m HEAD@{3}: commit: api
+[33m6355609[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m)[m HEAD@{4}: commit: Backend opt
+[33me57f98d[m HEAD@{5}: commit: Backend opt
+[33mbe34827[m HEAD@{6}: commit: android login
+[33m7981fee[m HEAD@{7}: commit: android login
+[33m283c472[m HEAD@{8}: commit: App Google
+[33m8c8e438[m HEAD@{9}: commit: Android google
+[33m6cd778e[m HEAD@{10}: commit: File name mismatch
+[33m220348f[m HEAD@{11}: commit: File name mismatch
+[33m898b73f[m HEAD@{12}: commit: File name mismatch
+[33m18f5f22[m HEAD@{13}: commit: Android fixes and inngest worker
+[33m15b71c9[m HEAD@{14}: commit: Readme
+[33m9602140[m HEAD@{15}: commit: Android build
+[33m4ccecc5[m HEAD@{16}: commit: Android build
+[33mf9078b4[m HEAD@{17}: commit: Final touches
+[33mc3ad303[m HEAD@{18}: commit: Final touches
+[33m005d993[m HEAD@{19}: commit: Fixed orchestrator
+[33m323df97[m HEAD@{20}: Branch: renamed refs/heads/master to refs/heads/main
+[33m323df97[m HEAD@{22}: commit (initial): Initial commit: EduBridge base project
