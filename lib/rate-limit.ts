@@ -1,55 +1,49 @@
-import { Ratelimit } from '@upstash/ratelimit';
-import { Redis } from '@upstash/redis';
+// Removed @upstash/ratelimit and @upstash/redis imports
+// Removed Redis client initialization
 
-const redis = new Redis({
-  url: process.env.UPSTASH_REDIS_REST_URL!,
-  token: process.env.UPSTASH_REDIS_REST_TOKEN!,
-});
+// Mock limiter to completely bypass rate limiting while keeping the same response structure
+const dummyLimiter = {
+  limit: async (identifier?: string) => ({
+    success: true,
+    limit: 9999,
+    remaining: 9999,
+    reset: Date.now() + 60000, // Mock reset time (1 minute from now)
+  }),
+};
 
-// Existing rate limiters (unchanged)
+// Existing rate limiters (bypassed)
 export const rateLimiters = {
-  profileRead: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(100, '60 s'), analytics: true, prefix: 'ratelimit:profile:read' }),
-  profileWrite: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(20, '60 s'), analytics: true, prefix: 'ratelimit:profile:write' }),
-  export: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(5, '60 m'), analytics: true, prefix: 'ratelimit:export' }),
-  deleteAccount: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(3, '60 m'), analytics: true, prefix: 'ratelimit:delete' }),
-  avatar: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(10, '60 m'), analytics: true, prefix: 'ratelimit:avatar' }),
-  achievements: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(60, '60 s'), analytics: true, prefix: 'ratelimit:achievements' }),
-  curriculum: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(5, '60 m'), analytics: true, prefix: 'ratelimit:curriculum' }),
-  assessment: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(30, '60 m'), analytics: true, prefix: 'ratelimit:assessment' }),
-  doubts: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(20, '60 m'), analytics: true, prefix: 'ratelimit:doubts' }),
-  chapterGeneration: new Ratelimit({ redis, limiter: Ratelimit.slidingWindow(100, '1h'), prefix: 'ratelimit:chapter' }),
+  profileRead: dummyLimiter,
+  profileWrite: dummyLimiter,
+  export: dummyLimiter,
+  deleteAccount: dummyLimiter,
+  avatar: dummyLimiter,
+  achievements: dummyLimiter,
+  curriculum: dummyLimiter,
+  assessment: dummyLimiter,
+  doubts: dummyLimiter,
+  chapterGeneration: dummyLimiter,
 };
 
-// 🔥 NEW: Provider‑specific request rate limiters (RPM)
+// 🔥 NEW: Provider‑specific request rate limiters (RPM) (bypassed)
 export const providerRateLimiters = {
-  gemini: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(20, '1 m'),  // Gemini free tier: 20 RPM
-    analytics: true,
-    prefix: 'ratelimit:provider:gemini',
-  }),
-  groq: new Ratelimit({
-    redis,
-    limiter: Ratelimit.slidingWindow(30, '1 m'),   // Groq free tier: 30 RPM
-    analytics: true,
-    prefix: 'ratelimit:provider:groq',
-  }),
+  gemini: dummyLimiter,
+  groq: dummyLimiter,
 };
 
-// Helper to check provider rate limit (use a global identifier or user ID)
+// Helper to check provider rate limit (always returns success)
 export async function checkProviderRateLimit(
   provider: 'gemini' | 'groq',
   identifier: string = 'global'
 ): Promise<{ success: boolean; reset: number }> {
-  const limiter = providerRateLimiters[provider];
-  const result = await limiter.limit(identifier);
-  return { success: result.success, reset: result.reset };
+  return { success: true, reset: Date.now() + 60000 };
 }
 
-// (Existing helpers unchanged)
-export async function checkRateLimit(limiter: Ratelimit, identifier: string) {
+// Existing helper (always returns success)
+export async function checkRateLimit(limiter: any, identifier: string) {
+  // We call the passed limiter (which is now dummyLimiter) to maintain behavior compatibility
   const result = await limiter.limit(identifier);
-  return { success: result.success, remaining: result.remaining, reset: result.reset };
+  return { success: true, remaining: result.remaining, reset: result.reset };
 }
 
 export function getClientIdentifier(req: Request): string {
@@ -57,7 +51,7 @@ export function getClientIdentifier(req: Request): string {
   return forwarded ? forwarded.split(',')[0].trim() : req.headers.get('x-real-ip') || 'unknown';
 }
 
-// Token budget (adjust as needed)
+// Token budget (kept so files importing it don't break)
 export const TOKEN_BUDGET = {
   daily: 100000,          // Groq free tier daily limit (increase if using paid)
   buffer: 5000,
@@ -68,26 +62,19 @@ export const TOKEN_BUDGET = {
   },
 };
 
-// Token helpers (unchanged)
-function getTokenKey(userId: string): string {
-  const today = new Date().toISOString().split('T')[0];
-  return `tokens:${userId}:${today}`;
-}
+// Token helpers (logic bypassed to always allow spending and pretend no tokens are used)
 
 export async function canSpendTokens(userId: string, estimatedTokens: number): Promise<boolean> {
-  const key = getTokenKey(userId);
-  const used = (await redis.get<number>(key)) || 0;
-  return used + estimatedTokens + TOKEN_BUDGET.buffer <= TOKEN_BUDGET.daily;
+  // Always true
+  return true;
 }
 
-export async function recordTokenUsage(userId: string, tokensUsed: number) {
-  const key = getTokenKey(userId);
-  await redis.incrby(key, tokensUsed);
-  await redis.expire(key, 60 * 60 * 48);
+export async function recordTokenUsage(userId: string, tokensUsed: number): Promise<void> {
+  // No-op: do nothing since we bypassed Redis
+  return;
 }
 
 export async function getRemainingTokens(userId: string): Promise<number> {
-  const key = getTokenKey(userId);
-  const used = (await redis.get<number>(key)) || 0;
-  return Math.max(0, TOKEN_BUDGET.daily - used - TOKEN_BUDGET.buffer);
+  // Always return the max possible budget
+  return Math.max(0, TOKEN_BUDGET.daily - TOKEN_BUDGET.buffer);
 }
